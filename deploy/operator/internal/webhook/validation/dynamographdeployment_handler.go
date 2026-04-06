@@ -41,15 +41,20 @@ const (
 // DynamoGraphDeploymentHandler is a handler for validating DynamoGraphDeployment resources.
 // It is a thin wrapper around DynamoGraphDeploymentValidator.
 type DynamoGraphDeploymentHandler struct {
-	mgr          manager.Manager
-	groveEnabled bool
+	mgr               manager.Manager
+	operatorPrincipal string
+	groveEnabled      bool
 }
 
 // NewDynamoGraphDeploymentHandler creates a new handler for DynamoGraphDeployment Webhook.
-func NewDynamoGraphDeploymentHandler(mgr manager.Manager, groveEnabled bool) *DynamoGraphDeploymentHandler {
+// operatorPrincipal is the full Kubernetes SA username of the operator, used to authorize
+// replica changes on scaling-adapter-enabled services (#7656).
+// groveEnabled reflects the operator's runtime config (global.grove.enabled).
+func NewDynamoGraphDeploymentHandler(mgr manager.Manager, operatorPrincipal string, groveEnabled bool) *DynamoGraphDeploymentHandler {
 	return &DynamoGraphDeploymentHandler{
-		mgr:          mgr,
-		groveEnabled: groveEnabled,
+		mgr:               mgr,
+		operatorPrincipal: operatorPrincipal,
+		groveEnabled:      groveEnabled,
 	}
 }
 
@@ -109,7 +114,7 @@ func (h *DynamoGraphDeploymentHandler) ValidateUpdate(ctx context.Context, oldOb
 	}
 
 	// Validate stateful rules (immutability + replicas protection)
-	updateWarnings, err := validator.ValidateUpdate(oldDeployment, userInfo)
+	updateWarnings, err := validator.ValidateUpdate(oldDeployment, userInfo, h.operatorPrincipal)
 	if err != nil {
 		username := "<unknown>"
 		if userInfo != nil {

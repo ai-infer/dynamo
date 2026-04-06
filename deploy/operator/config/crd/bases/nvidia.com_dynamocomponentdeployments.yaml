@@ -10555,6 +10555,11 @@ spec:
                     When enabled, the operator creates a dedicated GMS weight server pod and
                     multiple engine pods per rank that share GPUs via DRA resource claims.
                   properties:
+                    coordinationEndpoint:
+                      description: |-
+                        CoordinationEndpoint is reserved for the intra-pod GMS implementation.
+                        Not used by the inter-pod (Grove) pathway; kept for CRD compatibility.
+                      type: string
                     enabled:
                       description: Enabled activates GMS failover for this service.
                       type: boolean

@@ -41,7 +41,7 @@ global:
     # Set to true when Grove is available in the cluster (installed externally).
     # Automatically true when install=true. The operator uses this to decide whether to
     # create PodCliqueSets for multinode deployments.
-    enabled: false
+    enabled: true
 
 # Subcharts configuration
 
@@ -72,7 +72,7 @@ dynamo-operator:
   # -- Namespace access controls for the operator
   namespaceRestriction:
     # -- Whether to restrict operator to specific namespaces. By default, the operator will run with cluster-wide permissions. Only 1 instance of the operator should be deployed in the cluster. If you want to deploy multiple operator instances, you can set this to true and specify the target namespace (by default, the target namespace is the helm release namespace).
-    enabled: false
+    enabled: true
     # -- Target namespace for operator deployment (leave empty for current namespace)
     targetNamespace:
     # Namespace scope marker lease configuration (used to prevent conflicts when running both cluster-wide and namespace-restricted operators)
@@ -87,7 +87,7 @@ dynamo-operator:
     # -- Whether to provision a ClusterRole for the namespace-scoped operator to read GPU node labels.
     # When true (default), Helm creates a ClusterRole/ClusterRoleBinding granting node read access.
     # Set to false if your installer lacks ClusterRole creation permissions.
-    enabled: true
+    enabled: false
 
   # -- The Dynamo discovery backend to use. Default is "kubernetes" for Kubernetes API service discovery. Set to "etcd" to use ETCD for discovery. --
   discoveryBackend: "kubernetes"
@@ -233,34 +233,6 @@ dynamo-operator:
     # -- Path written by worker when model is loaded and ready for checkpointing
     readyForCheckpointFilePath: "/tmp/ready-for-checkpoint"
 
-    # Storage configuration
-    # These settings tell the operator where to find checkpoint storage
-    # Must match the configuration in the snapshot chart
-    storage:
-      # -- Storage backend type: pvc, s3, or oci
-      type: pvc
-
-      # PVC storage configuration (used when type=pvc)
-      pvc:
-        # -- Name of the PVC created by the snapshot chart
-        pvcName: "snapshot-pvc"
-        # -- Base path within the PVC for storing checkpoints
-        basePath: "/checkpoints"
-
-      # S3 storage configuration (used when type=s3)
-      s3:
-        # -- S3 URI in format: s3://[endpoint/]bucket/prefix
-        uri: ""
-        # -- Reference to a secret containing AWS credentials
-        credentialsSecretRef: ""
-
-      # OCI registry storage configuration (used when type=oci)
-      oci:
-        # -- OCI URI in format: oci://registry/repository
-        uri: ""
-        # -- Reference to a docker config secret for registry authentication
-        credentialsSecretRef: ""
-
 # Grove component - distributed inference orchestration
 # Installation is controlled by global.grove.install above.
 grove:
@@ -268,6 +240,16 @@ grove:
   tolerations: []
   # -- Affinity for Grove pods
   affinity: {}
+  config:
+    topologyAwareScheduling:
+      enabled: true
+      levels:
+        - domain: zone
+          key: topology.kubernetes.io/zone
+        - domain: host
+          key: kubernetes.io/hostname
+        - domain: region
+          key: topology.kubernetes.io/region
 
 # Kai Scheduler component - advanced workload scheduling
 # Installation is controlled by global.kai-scheduler.install above.
