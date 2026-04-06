@@ -1,0 +1,1 @@
+[TEST] 2026-04-06T21:33:10 ERROR root: Error getting metrics: Registry error

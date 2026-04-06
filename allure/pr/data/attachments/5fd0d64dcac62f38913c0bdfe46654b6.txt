@@ -1,0 +1,114 @@
+[2m2026-04-06T21:29:02.098326Z[0m [32m INFO[0m [2mprofile_sla._extract_profiler_params[0m[2m:[0m Profiler config: model=deepseek-ai/DeepSeek-R1, backend=sglang, system=h200_sxm, total_gpus=16, isl=4000, osl=1000, ttft=2000.0, itl=50.0, e2e_latency=None, strategy=thorough, picking=default
+[2m2026-04-06T21:29:02.353341Z[0m [32m INFO[0m [2mutils._infer_quantization_fields[0m[2m:[0m Quant inference result: quant_algo=fp8_block, kv_cache_quant_algo=None, quant_dynamic=True
+[2m2026-04-06T21:29:02.353459Z[0m [32m INFO[0m [2mutils.get_model_config_from_model_path[0m[2m:[0m Loaded model config for deepseek-ai/DeepSeek-R1: architecture=DeepseekV3ForCausalLM, layers=61, n=128, n_kv=128, d=56, hidden_size=7168, inter_size=18432, vocab=129280, context=163840, topk=8, num_experts=256, moe_inter_size=2048, extra_params=None
+[2m2026-04-06T21:29:02.354708Z[0m [33m WARN[0m [2mthorough.run_thorough[0m[2m:[0m THOROUGH mode: only disagg configurations are supported.
+[2m2026-04-06T21:29:02.356840Z[0m [32m INFO[0m [2mnaive._estimate_model_weight_bytes[0m[2m:[0m Estimated model weight size for deepseek-ai/DeepSeek-R1: 1306.29 GiB (701.31B params)
+[2m2026-04-06T21:29:02.357415Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m AIC disagg support for deepseek-ai/DeepSeek-R1 on h200_sxm/sglang: False
+[2m2026-04-06T21:29:02.357469Z[0m [33m WARN[0m [2mnaive._calculate_min_tp[0m[2m:[0m Model requires TP=16 to fit in memory, but max TP is 8 (gpus_per_node=8, total_gpus=8). The model may not fit! Consider using PP or other parallelism strategies to fit across more than one node, or use a system with more GPUs per node.
+[2m2026-04-06T21:29:02.357509Z[0m [32m INFO[0m [2mnaive._calculate_min_tp[0m[2m:[0m TP calculation: model=1306.29GiB, vram=141.00GiB, required=1959.43GiB (1.5x), min_tp=14, selected_tp=8
+[2m2026-04-06T21:29:02.357545Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Minimum GPUs per engine (memory fit): 8
+[2m2026-04-06T21:29:02.357589Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Parallel lists: is_moe=True, enable_wideep=True, min_gpus=8, prefill_max_gpus=32, decode_max_gpus=64, prefill_num_gpu_list=[8, 16, 32], prefill_dp_list=[1, 2, 4, 8, 16, 32], prefill_moe_ep_list=[8, 16, 32]
+[2m2026-04-06T21:29:02.357669Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Enumerated 4 prefill configs, 5 decode configs
+[2m2026-04-06T21:29:02.357703Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Building prefill DGD: tp=1 pp=1 dp=8 moe_tp=1 moe_ep=8
+2026-04-06 21:29:02 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.443666Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.444108Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Building prefill DGD: tp=1 pp=1 dp=16 moe_tp=1 moe_ep=16
+2026-04-06 21:29:02 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.472585Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.472974Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Building prefill DGD: tp=1 pp=1 dp=32 moe_tp=1 moe_ep=32
+2026-04-06 21:29:02 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.501251Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.501618Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Building prefill DGD: tp=8 pp=1 dp=1 moe_tp=1 moe_ep=8
+2026-04-06 21:29:02 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.529631Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.529978Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Building decode DGD: tp=1 pp=1 dp=8 moe_tp=1 moe_ep=8
+2026-04-06 21:29:02 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.559245Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.559658Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Building decode DGD: tp=1 pp=1 dp=16 moe_tp=1 moe_ep=16
+2026-04-06 21:29:02 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.588009Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.588431Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Building decode DGD: tp=1 pp=1 dp=32 moe_tp=1 moe_ep=32
+2026-04-06 21:29:02 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.616285Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.616690Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Building decode DGD: tp=1 pp=1 dp=64 moe_tp=1 moe_ep=64
+2026-04-06 21:29:02 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.645051Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.645474Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Building decode DGD: tp=8 pp=1 dp=1 moe_tp=1 moe_ep=8
+2026-04-06 21:29:02 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.674725Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:02.675141Z[0m [32m INFO[0m [2menumerate.enumerate_profiling_configs[0m[2m:[0m Enumeration complete: 4 prefill DGDs, 5 decode DGDs
+[2m2026-04-06T21:29:02.675195Z[0m [32m INFO[0m [2mthorough.run_thorough[0m[2m:[0m Enumerated 4 prefill candidates, 5 decode candidates
+[2m2026-04-06T21:29:02.675331Z[0m [33m WARN[0m [2mprotocol._deep_merge_overrides[0m[2m:[0m Service 'prefill' does not exist in the generated DGD config; overrides for this service will not be applied.
+[2m2026-04-06T21:29:02.675440Z[0m [33m WARN[0m [2mprotocol._deep_merge_overrides[0m[2m:[0m Service 'prefill' does not exist in the generated DGD config; overrides for this service will not be applied.
+[2m2026-04-06T21:29:02.675544Z[0m [33m WARN[0m [2mprotocol._deep_merge_overrides[0m[2m:[0m Service 'prefill' does not exist in the generated DGD config; overrides for this service will not be applied.
+[2m2026-04-06T21:29:02.675642Z[0m [33m WARN[0m [2mprotocol._deep_merge_overrides[0m[2m:[0m Service 'prefill' does not exist in the generated DGD config; overrides for this service will not be applied.
+[2m2026-04-06T21:29:02.675753Z[0m [33m WARN[0m [2mprotocol._deep_merge_overrides[0m[2m:[0m Service 'prefill' does not exist in the generated DGD config; overrides for this service will not be applied.
+[2m2026-04-06T21:29:02.675863Z[0m [33m WARN[0m [2mprotocol._deep_merge_overrides[0m[2m:[0m Service 'prefill' does not exist in the generated DGD config; overrides for this service will not be applied.
+[2m2026-04-06T21:29:02.675973Z[0m [33m WARN[0m [2mprotocol._deep_merge_overrides[0m[2m:[0m Service 'prefill' does not exist in the generated DGD config; overrides for this service will not be applied.
+[2m2026-04-06T21:29:02.676102Z[0m [33m WARN[0m [2mprotocol._deep_merge_overrides[0m[2m:[0m Service 'prefill' does not exist in the generated DGD config; overrides for this service will not be applied.
+[2m2026-04-06T21:29:02.676212Z[0m [33m WARN[0m [2mprotocol._deep_merge_overrides[0m[2m:[0m Service 'prefill' does not exist in the generated DGD config; overrides for this service will not be applied.
+[2m2026-04-06T21:29:02.676251Z[0m [32m INFO[0m [2mthorough.run_thorough[0m[2m:[0m Applied DGD overrides to 4 prefill + 5 decode candidates.
+2026-04-06 21:29:02 - dynamo.profiler.utils.config_modifiers.sglang - WARNING - Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.679249Z[0m [33m WARN[0m [2msglang.get_port[0m[2m:[0m Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.679302Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Profiling prefill candidate dep8 with 8 GPUs...
+[2m2026-04-06T21:29:02.680608Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Waiting for prefill deployment to be ready...
+[2m2026-04-06T21:29:02.680891Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Prefill deployment ready
+2026-04-06 21:29:02 - dynamo.profiler.utils.config_modifiers.sglang - WARNING - Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.683636Z[0m [33m WARN[0m [2msglang.get_port[0m[2m:[0m Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.683689Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Profiling prefill candidate dep16 with 16 GPUs...
+[2m2026-04-06T21:29:02.684881Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Waiting for prefill deployment to be ready...
+[2m2026-04-06T21:29:02.685070Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Prefill deployment ready
+2026-04-06 21:29:02 - dynamo.profiler.utils.config_modifiers.sglang - WARNING - Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.687807Z[0m [33m WARN[0m [2msglang.get_port[0m[2m:[0m Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.687858Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Profiling prefill candidate dep32 with 32 GPUs...
+[2m2026-04-06T21:29:02.688988Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Waiting for prefill deployment to be ready...
+[2m2026-04-06T21:29:02.689222Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Prefill deployment ready
+2026-04-06 21:29:02 - dynamo.profiler.utils.config_modifiers.sglang - WARNING - Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.692037Z[0m [33m WARN[0m [2msglang.get_port[0m[2m:[0m Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.692093Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Profiling prefill candidate dep8 with 8 GPUs...
+[2m2026-04-06T21:29:02.693294Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Waiting for prefill deployment to be ready...
+[2m2026-04-06T21:29:02.693493Z[0m [32m INFO[0m [2mthorough._benchmark_prefill_candidates[0m[2m:[0m Prefill deployment ready
+2026-04-06 21:29:02 - dynamo.profiler.utils.config_modifiers.sglang - WARNING - Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.698383Z[0m [33m WARN[0m [2msglang.get_port[0m[2m:[0m Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.698437Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Profiling decode candidate dep8 with 8 GPUs...
+[2m2026-04-06T21:29:02.699611Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Waiting for decode deployment to be ready...
+[2m2026-04-06T21:29:02.699812Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Decode deployment ready
+[2m2026-04-06T21:29:02.700081Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Sweeping num_request: [1, 4, 8]
+2026-04-06 21:29:02 - dynamo.profiler.utils.config_modifiers.sglang - WARNING - Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.703367Z[0m [33m WARN[0m [2msglang.get_port[0m[2m:[0m Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.703420Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Profiling decode candidate dep16 with 16 GPUs...
+[2m2026-04-06T21:29:02.704584Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Waiting for decode deployment to be ready...
+[2m2026-04-06T21:29:02.704813Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Decode deployment ready
+[2m2026-04-06T21:29:02.705073Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Sweeping num_request: [1, 4, 8]
+2026-04-06 21:29:02 - dynamo.profiler.utils.config_modifiers.sglang - WARNING - Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.708367Z[0m [33m WARN[0m [2msglang.get_port[0m[2m:[0m Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.708418Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Profiling decode candidate dep32 with 32 GPUs...
+[2m2026-04-06T21:29:02.709615Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Waiting for decode deployment to be ready...
+[2m2026-04-06T21:29:02.709813Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Decode deployment ready
+[2m2026-04-06T21:29:02.710065Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Sweeping num_request: [1, 4, 8]
+2026-04-06 21:29:02 - dynamo.profiler.utils.config_modifiers.sglang - WARNING - Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.713365Z[0m [33m WARN[0m [2msglang.get_port[0m[2m:[0m Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.713418Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Profiling decode candidate dep64 with 64 GPUs...
+[2m2026-04-06T21:29:02.715487Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Waiting for decode deployment to be ready...
+[2m2026-04-06T21:29:02.715681Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Decode deployment ready
+[2m2026-04-06T21:29:02.715934Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Sweeping num_request: [1, 4, 8]
+2026-04-06 21:29:02 - dynamo.profiler.utils.config_modifiers.sglang - WARNING - Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.719003Z[0m [33m WARN[0m [2msglang.get_port[0m[2m:[0m Port not found in configuration args, using default port: 8000
+[2m2026-04-06T21:29:02.719054Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Profiling decode candidate dep8 with 8 GPUs...
+[2m2026-04-06T21:29:02.720264Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Waiting for decode deployment to be ready...
+[2m2026-04-06T21:29:02.720461Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Decode deployment ready
+[2m2026-04-06T21:29:02.720739Z[0m [32m INFO[0m [2mthorough._benchmark_decode_candidates[0m[2m:[0m Sweeping num_request: [1, 4, 8]
+[2m2026-04-06T21:29:02.780305Z[0m [32m INFO[0m [2mperf_database.get_database[0m[2m:[0m Loading database for system='h200_sxm', backend='sglang', version='0.5.9'
+[2m2026-04-06T21:29:04.797192Z[0m [32m INFO[0m [2mmodels._apply_model_quant_defaults[0m[2m:[0m Resolved quant modes for Prefill worker: gemm=GEMMQuantMode.fp8_block moe=MoEQuantMode.fp8_block kvcache=KVCacheQuantMode.fp8 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+[2m2026-04-06T21:29:04.797352Z[0m [32m INFO[0m [2mmodels._apply_model_quant_defaults[0m[2m:[0m Resolved quant modes for Decode worker: gemm=GEMMQuantMode.fp8_block moe=MoEQuantMode.fp8_block kvcache=KVCacheQuantMode.fp8 fmha=FMHAQuantMode.float16 comm=CommQuantMode.half
+2026-04-06 21:29:04 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:04.860539Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+2026-04-06 21:29:04 - dynamo.profiler.utils.config - WARNING - Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:04.860646Z[0m [33m WARN[0m [2mconfig.sanitize_cli_args[0m[2m:[0m Stripping CLI arg --kv-cache-dtype with invalid value 'None'
+[2m2026-04-06T21:29:04.877280Z[0m [32m INFO[0m [2mprofile_sla._execute_strategy[0m[2m:[0m Selected prefill: dep8 (8 GPUs, tp=1 pp=1 dp=8 moe_tp=1 moe_ep=8), decode: dep8 (8 GPUs, tp=1 pp=1 dp=8 moe_tp=1 moe_ep=8)
+[2m2026-04-06T21:29:04.877474Z[0m [32m INFO[0m [2mprofile_sla.run_profile[0m[2m:[0m Applied DGD overrides to the picked DGD config.
+[2m2026-04-06T21:29:04.878305Z[0m [32m INFO[0m [2mprofile_sla.run_profile[0m[2m:[0m Applied DGD overrides to the final config.
+[2m2026-04-06T21:29:04.882756Z[0m [32m INFO[0m [2mprofile_sla._write_final_output[0m[2m:[0m Final DGD config saved to /tmp/pytest_temp/popen-gw0/test_9a_sglang_overrides0/profiling_results/final_config.yaml
+[2m2026-04-06T21:29:04.883204Z[0m [32m INFO[0m [2mprofile_sla.run_profile[0m[2m:[0m Performing final cleanup of any remaining deployments...
+[2m2026-04-06T21:29:04.883257Z[0m [32m INFO[0m [2mdynamo_deployment.cleanup_remaining_deployments[0m[2m:[0m No deployments to clean up
+[2m2026-04-06T21:29:04.883293Z[0m [32m INFO[0m [2mprofile_sla.run_profile[0m[2m:[0m Final cleanup completed.

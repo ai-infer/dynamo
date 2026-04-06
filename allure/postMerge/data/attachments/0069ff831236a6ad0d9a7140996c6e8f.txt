@@ -1,0 +1,13 @@
+{"level":"info","ts":"2026-04-06T21:43:05.959501Z","caller":"osutil/interrupt_unix.go:64","msg":"received signal; shutting down","signal":"terminated"}
+[114] 2026/04/06 21:43:05.959489 [INF] Trapped "terminated" signal
+{"level":"info","ts":"2026-04-06T21:43:05.959577Z","caller":"embed/etcd.go:408","msg":"closing etcd server","name":"default","data-dir":"default.etcd","advertise-peer-urls":["http://localhost:2380"],"advertise-client-urls":["http://localhost:2379"]}
+[114] 2026/04/06 21:43:05.959710 [INF] Initiating Shutdown...
+{"level":"info","ts":"2026-04-06T21:43:05.959959Z","caller":"etcdserver/server.go:1546","msg":"skipped leadership transfer for single voting member cluster","local-member-id":"8e9e05c52164694d","current-leader-member-id":"8e9e05c52164694d"}
+{"level":"warn","ts":"2026-04-06T21:43:05.960042Z","caller":"embed/serve.go:179","msg":"stopping insecure grpc server due to error","error":"accept tcp 127.0.0.1:2379: use of closed network connection"}
+{"level":"warn","ts":"2026-04-06T21:43:05.960063Z","caller":"embed/serve.go:181","msg":"stopped insecure grpc server due to error","error":"accept tcp 127.0.0.1:2379: use of closed network connection"}
+[114] 2026/04/06 21:43:05.960521 [INF] Initiating JetStream Shutdown...
+[114] 2026/04/06 21:43:05.960535 [INF] JetStream Shutdown
+[114] 2026/04/06 21:43:05.960656 [INF] Server Exiting..
+{"level":"info","ts":"2026-04-06T21:43:05.962230Z","caller":"embed/etcd.go:613","msg":"stopping serving peer traffic","address":"127.0.0.1:2380"}
+{"level":"info","ts":"2026-04-06T21:43:05.962336Z","caller":"embed/etcd.go:618","msg":"stopped serving peer traffic","address":"127.0.0.1:2380"}
+{"level":"info","ts":"2026-04-06T21:43:05.962349Z","caller":"embed/etcd.go:410","msg":"closed etcd server","name":"default","data-dir":"default.etcd","advertise-peer-urls":["http://localhost:2380"],"advertise-client-urls":["http://localhost:2379"]}

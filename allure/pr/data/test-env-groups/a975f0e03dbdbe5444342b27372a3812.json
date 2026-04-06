@@ -1,0 +1,1 @@
+{"id":"a975f0e03dbdbe5444342b27372a3812","fullName":"tests.gms.integration.test_gms_sglang_memory_saver#test_region_treats_model_weights_as_weights","name":"test_region_treats_model_weights_as_weights","status":"passed","testResultsByEnv":{"sglang-amd64":"438dd5c9dac7a381d0eae0134e0beab9","sglang-arm64":"0365efd82acbabe02448a124498d32e7"}}

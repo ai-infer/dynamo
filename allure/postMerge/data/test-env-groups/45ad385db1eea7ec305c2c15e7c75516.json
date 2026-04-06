@@ -1,0 +1,1 @@
+{"id":"45ad385db1eea7ec305c2c15e7c75516","fullName":"tests.gms.integration.test_gms_vllm_worker#test_sleep_level_2_unmaps_weights_and_kv_cache","name":"test_sleep_level_2_unmaps_weights_and_kv_cache","status":"passed","testResultsByEnv":{"vllm-amd64":"a1ae3e69556b156cdcd5c5fe3c05d976","vllm-arm64":"7231b540956812758c24bc9e87fb4908"}}

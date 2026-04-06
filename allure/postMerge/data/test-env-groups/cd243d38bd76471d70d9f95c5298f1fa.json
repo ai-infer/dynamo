@@ -1,0 +1,1 @@
+{"id":"cd243d38bd76471d70d9f95c5298f1fa","fullName":"tests.gms.integration.test_gms_vllm_worker#test_initialize_from_config_uses_kv_cache_gms_tag","name":"test_initialize_from_config_uses_kv_cache_gms_tag","status":"passed","testResultsByEnv":{"vllm-amd64":"03966f44031b2991da3b46b8d12db44d","vllm-arm64":"f449d88d3c7e4b0722c2849060af8993"}}

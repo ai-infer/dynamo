@@ -1,0 +1,1 @@
+{"id":"e45081db1b5609eb052e7ba3ad4332bc","fullName":"components.src.dynamo.planner.tests.unit.test_kube#test_get_service_replica_status_stable_with_ready_replicas_fallback","name":"test_get_service_replica_status_stable_with_ready_replicas_fallback","status":"passed","testResultsByEnv":{"default":"41b2c4780a199c795392908a25194c2a"}}

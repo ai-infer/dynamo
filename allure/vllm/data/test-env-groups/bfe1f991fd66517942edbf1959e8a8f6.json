@@ -1,1 +1,1 @@
-{"id":"bfe1f991fd66517942edbf1959e8a8f6","fullName":"tests.serve.test_trtllm#test_deployment","name":"test_deployment[disaggregated-2]","status":"passed","testResultsByEnv":{"trtllm-amd64":"0a9f1c4f5da30bc48654d00cbeda62d4","default":"4e9ed5b093373be9e0b461af84ca1154"}}
+{"id":"bfe1f991fd66517942edbf1959e8a8f6","fullName":"tests.serve.test_trtllm#test_deployment","name":"test_deployment[video_diffusion-2]","status":"passed","testResultsByEnv":{"trtllm-amd64":"7f36287f793556208dc9463579992eca","default":"524e69a8aaee7c231de88b18485dab7d"}}

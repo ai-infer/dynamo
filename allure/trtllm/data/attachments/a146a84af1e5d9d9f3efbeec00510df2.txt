@@ -1,0 +1,8 @@
+INFO     root:conftest.py:428 Downloading 2 models needed for collected tests
+Models: {'Qwen/Qwen3-0.6B', 'llava-hf/llava-v1.6-mistral-7b-hf'}
+INFO     root:conftest.py:277 HF_TOKEN found in environment
+INFO     root:conftest.py:294 Pre-downloading model: Qwen/Qwen3-0.6B
+INFO     root:conftest.py:321 Successfully pre-downloaded: Qwen/Qwen3-0.6B
+INFO     root:conftest.py:294 Pre-downloading model: llava-hf/llava-v1.6-mistral-7b-hf
+INFO     root:conftest.py:321 Successfully pre-downloaded: llava-hf/llava-v1.6-mistral-7b-hf
+INFO     root:conftest.py:398 Enabled HF_HUB_OFFLINE with _patch_mistral_regex workaround (see https://github.com/huggingface/transformers/issues/44843)

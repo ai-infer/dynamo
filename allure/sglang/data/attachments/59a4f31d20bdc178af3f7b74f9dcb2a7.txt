@@ -1,0 +1,4 @@
+[2m2026-04-06T21:35:59.927824Z[0m [32m INFO[0m [2mvideo_handler.generate[0m[2m:[0m Received generation request: e3831bee-576a-426d-97ca-f85407d9a4d4
+[2m2026-04-06T21:35:59.927985Z[0m [32m INFO[0m [2mvideo_handler.generate[0m[2m:[0m Request e3831bee-576a-426d-97ca-f85407d9a4d4: prompt='a test video...', size=832x480, frames=81, steps=50
+[2m2026-04-06T21:35:59.934663Z[0m [32m INFO[0m [2mvideo_handler.generate[0m[2m:[0m Request e3831bee-576a-426d-97ca-f85407d9a4d4: encoding video output (shape=(4, 64, 64, 3)) to MP4 at 24 fps
+[2m2026-04-06T21:35:59.935118Z[0m [32m INFO[0m [2mvideo_handler.generate[0m[2m:[0m Request e3831bee-576a-426d-97ca-f85407d9a4d4 completed in 0.01s
