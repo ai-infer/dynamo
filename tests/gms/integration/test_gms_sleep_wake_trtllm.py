@@ -65,7 +65,7 @@ def test_gms_basic_sleep_wake_trtllm(
             assert result["choices"]
             logger.info("Initial inference: %s", result)
 
-            # Wait for weights to reach committed state (no active RW epoch, data present).
+            # Wait for weights to reach committed state (no active RW session, data present).
             deadline = time.monotonic() + 60.0
             while True:
                 weights_before = weights_gms.get_runtime_state()
@@ -172,7 +172,7 @@ def test_gms_read_only_import_trtllm(
     predownload_models,
 ):
     """A second TRTLLM process with gms_read_only=True imports weights from the
-    committed epoch published by the first, sharing GPU memory via GMS."""
+    committed layout published by the first, sharing GPU memory via GMS."""
     ports = gms_ports
     with ExitStack() as stack:
         weights_gms = stack.enter_context(

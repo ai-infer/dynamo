@@ -23,9 +23,9 @@ from ..harness.runtime import (
 from ..harness.trtllm import TRTLLM_GMS_MODEL_NAME, TRTLLMWithGMSProcess, _sleep_engine
 
 # TRTLLM shadow failover semantics:
-# 1. Shadow A starts, publishes weights as committed GMS epoch, sleeps (KV freed).
-# 2. Shadow B starts, imports weights as RO from committed epoch, sleeps (KV freed).
-# 3. Primary starts, imports weights as RO from committed epoch, runs inference.
+# 1. Shadow A starts, publishes weights as committed GMS layout, sleeps (KV freed).
+# 2. Shadow B starts, imports weights as RO from committed layout, sleeps (KV freed).
+# 3. Primary starts, imports weights as RO from committed layout, runs inference.
 # 4. Primary is killed; GPU memory is released.
 # 5. Shadow A wakes: reconnects weights as RO, recreates KV cache via TRTLLM VMM.
 # 6. Inference succeeds on Shadow A.

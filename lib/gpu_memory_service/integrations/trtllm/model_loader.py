@@ -8,7 +8,7 @@ enabling VA-stable weight sharing and sleep/wake with memory release.
 
 Two modes:
   - RW (first loader): loads weights from disk, allocates via GMS pool, commits.
-  - RO (subsequent loaders): materializes model tensors from the committed epoch.
+  - RO (subsequent loaders): materializes model tensors from the committed layout.
 """
 
 from __future__ import annotations
@@ -149,7 +149,7 @@ def _load_rw(
 
 
 def _load_ro(self, checkpoint_dir, checkpoint_loader, gms_client, device_index):
-    """RO path: skip disk I/O, materialize tensors from the committed GMS epoch."""
+    """RO path: skip disk I/O, materialize tensors from the committed GMS layout."""
     global _last_imported_weights_bytes
 
     from tensorrt_llm._torch.models import AutoModelForCausalLM
