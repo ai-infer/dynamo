@@ -96,7 +96,7 @@ def _send_chat_completions(
     """Send a chat completions request with optional request ID and streaming."""
     headers = {"Content-Type": "application/json"}
     if request_id:
-        headers["x-dynamo-request-id"] = request_id
+        headers["x-request-id"] = request_id
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": "Hello"}],
@@ -282,7 +282,8 @@ def test_agg_unary_success(tracing_services) -> None:
     received, completed, http_sent = assert_lifecycle_logs(req_logs)
 
     assert received[0]["level"] == "INFO"
-    assert received[0].get("request_id") == rid
+    assert received[0].get("x_request_id") == rid
+    assert "request_id" in received[0]
     assert "model" in received[0]
     assert "endpoint" in received[0]
     assert "elapsed_ms" in completed[0]
@@ -294,12 +295,14 @@ def test_agg_unary_success(tracing_services) -> None:
     assert "input_tokens" in ic[0]
     assert "output_tokens" in ic[0]
 
-    # Worker lifecycle
+    # Worker lifecycle — verify both x_request_id and request_id propagated
     wk_logs = get_request_logs(tracing_services["worker"], rid)
     wk_received = [e for e in wk_logs if e.get("message") == "request received"]
     wk_completed = [e for e in wk_logs if e.get("message") == "request completed"]
     assert len(wk_received) >= 1, "Worker should log 'request received'"
     assert len(wk_completed) >= 1, "Worker should log 'request completed'"
+    assert wk_received[0].get("x_request_id") == rid, "Worker should have x_request_id"
+    assert "request_id" in wk_received[0], "Worker should have request_id"
 
 
 def test_agg_streaming_success(tracing_services) -> None:
@@ -348,10 +351,23 @@ def test_agg_404_error(tracing_services) -> None:
 
 
 def test_agg_invalid_uuid_warn(tracing_services) -> None:
-    """Invalid UUID: WARN logged, request proceeds with generated ID."""
+    """Invalid x-dynamo-request-id: WARN logged, request proceeds with generated ID."""
     port = tracing_services["frontend_port"]
 
-    resp = _send_chat_completions(port, request_id="NOT-A-VALID-UUID")
+    # Send deprecated x-dynamo-request-id with invalid value to test deprecation warning
+    resp = requests.post(
+        f"http://localhost:{port}/v1/chat/completions",
+        headers={
+            "Content-Type": "application/json",
+            "x-dynamo-request-id": "NOT-A-VALID-UUID",
+        },
+        json={
+            "model": TEST_MODEL,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 5,
+        },
+        timeout=60,
+    )
     # Request succeeds (invalid UUID is warned, not rejected)
     assert resp.status_code == 200
     time.sleep(1)
@@ -420,7 +436,7 @@ def test_agg_cancellation(tracing_services_slow) -> None:
             f"http://localhost:{port}/v1/chat/completions",
             headers={
                 "Content-Type": "application/json",
-                "x-dynamo-request-id": rid,
+                "x-request-id": rid,
             },
             json={
                 "model": TEST_MODEL,
@@ -452,7 +468,11 @@ def test_agg_cancellation(tracing_services_slow) -> None:
     assert (
         len(received) >= 1
     ), f"Missing 'request received': {[e.get('message') for e in req_logs]}"
-    assert_error_or_cancellation(req_logs)
+
+    # Also search by server-generated request_id for cancellation logs
+    server_rid = received[0].get("request_id", "")
+    all_req_logs = req_logs + find_logs_by_request_id(fe_logs, server_rid)
+    assert_error_or_cancellation(all_req_logs)
 
 
 # ---------------------------------------------------------------------------
@@ -623,7 +643,7 @@ def test_disagg_prefill_crash(tracing_services_disagg_slow) -> None:
             f"http://localhost:{port}/v1/chat/completions",
             headers={
                 "Content-Type": "application/json",
-                "x-dynamo-request-id": rid,
+                "x-request-id": rid,
             },
             json={
                 "model": TEST_MODEL,
