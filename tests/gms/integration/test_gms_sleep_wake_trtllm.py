@@ -34,6 +34,7 @@ from ..harness.trtllm import (
 #   recreated in a fresh local VMM region.
 
 logger = logging.getLogger(__name__)
+READ_ONLY_IMPORT_ENGINE_ARGS = '{"kv_cache_config":{"max_tokens":4096}}'
 
 
 @pytest.mark.trtllm
@@ -181,7 +182,11 @@ def test_gms_read_only_import_trtllm(
             DynamoFrontendProcess(request, frontend_port=ports["frontend"])
         )
         with TRTLLMWithGMSProcess(
-            request, "rw-engine", ports["shadow_system"], ports["frontend"]
+            request,
+            "rw-engine",
+            ports["shadow_system"],
+            ports["frontend"],
+            override_engine_args=READ_ONLY_IMPORT_ENGINE_ARGS,
         ):
             # Wait for the RW engine to publish its committed weights layout.
             deadline = time.monotonic() + 60.0
@@ -207,6 +212,7 @@ def test_gms_read_only_import_trtllm(
                 ports["shadow2_system"],
                 ports["frontend"],
                 model_loader_extra_config=TRTLLM_GMS_READ_ONLY_CONFIG,
+                override_engine_args=READ_ONLY_IMPORT_ENGINE_ARGS,
             ):
                 # The RO engine should import from the committed layout and expose
                 # itself as another RO session on the same weights server.

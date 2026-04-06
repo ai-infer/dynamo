@@ -172,6 +172,10 @@ def _load_ro(self, checkpoint_dir, checkpoint_loader, gms_client, device_index):
                 "GMS RO path requires successful MetaInitMode model construction"
             ) from exc
 
+        # Some models register cross-layer references like next_attn here.
+        if hasattr(model, "post_load_weights"):
+            model.post_load_weights()
+
         materialize_module_from_gms(gms_client, model, device_index=device_index)
         _last_imported_weights_bytes = int(gms_client.total_bytes)
 

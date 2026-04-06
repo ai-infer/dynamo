@@ -37,7 +37,7 @@ TRTLLM_GMS_MAX_SEQ_LEN = os.environ.get("TRTLLM_GMS_MAX_SEQ_LEN", "256")
 TRTLLM_GMS_MAX_NUM_TOKENS = os.environ.get("TRTLLM_GMS_MAX_NUM_TOKENS", "256")
 TRTLLM_GMS_OVERRIDE_ENGINE_ARGS = os.environ.get(
     "TRTLLM_GMS_OVERRIDE_ENGINE_ARGS",
-    '{"kv_cache_config":{"max_tokens":4096}}',
+    "",
 )
 
 
@@ -72,6 +72,7 @@ class TRTLLMWithGMSProcess(ManagedProcess):
         frontend_port: int,
         *,
         model_loader_extra_config: str | None = None,
+        override_engine_args: str | None = None,
     ):
         self.engine_id = engine_id
         self.system_port = system_port
@@ -96,9 +97,18 @@ class TRTLLMWithGMSProcess(ManagedProcess):
             TRTLLM_GMS_MAX_SEQ_LEN,
             "--max-num-tokens",
             TRTLLM_GMS_MAX_NUM_TOKENS,
-            "--override-engine-args",
-            TRTLLM_GMS_OVERRIDE_ENGINE_ARGS,
         ]
+        effective_override_engine_args = override_engine_args
+        if effective_override_engine_args is None:
+            effective_override_engine_args = TRTLLM_GMS_OVERRIDE_ENGINE_ARGS
+
+        if effective_override_engine_args:
+            command.extend(
+                [
+                    "--override-engine-args",
+                    effective_override_engine_args,
+                ]
+            )
         if model_loader_extra_config is not None:
             command.extend(["--model-loader-extra-config", model_loader_extra_config])
 
