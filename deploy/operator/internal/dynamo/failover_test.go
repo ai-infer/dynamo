@@ -326,7 +326,7 @@ func TestGmsResourceClaimTemplateConfigs_SingleNode(t *testing.T) {
 	require.Len(t, configs, 1)
 	assert.Equal(t, "svc-gpu-rank-0", configs[0].Name)
 
-	req := configs[0].Template.Spec.Devices.Requests[0]
+	req := configs[0].TemplateSpec.Spec.Devices.Requests[0]
 	require.NotNil(t, req.Exactly)
 	assert.Equal(t, "gpu.nvidia.com/h100", req.Exactly.DeviceClassName)
 	assert.Equal(t, int64(8), req.Exactly.Count)
@@ -349,7 +349,7 @@ func TestGmsResourceClaimTemplateConfigs_Multinode(t *testing.T) {
 	assert.Equal(t, "svc-gpu-rank-0", configs[0].Name)
 	assert.Equal(t, "svc-gpu-rank-1", configs[1].Name)
 
-	req := configs[1].Template.Spec.Devices.Requests[0]
+	req := configs[1].TemplateSpec.Spec.Devices.Requests[0]
 	require.NotNil(t, req.Exactly)
 	assert.Equal(t, "gpu.nvidia.com", req.Exactly.DeviceClassName)
 	assert.Equal(t, int64(4), req.Exactly.Count)
@@ -367,7 +367,7 @@ func TestGmsResourceSharingEntries_SingleNode(t *testing.T) {
 	assert.Equal(t, "svc-gpu-rank-0", refs[0].Name)
 	assert.Equal(t, grovev1alpha1.ResourceSharingScopePerReplica, refs[0].Scope)
 	require.NotNil(t, refs[0].Filter)
-	assert.Equal(t, []string{"svc-gms-0", "svc"}, refs[0].Filter.CliqueNames)
+	assert.Equal(t, []string{"svc-gms-0", "svc"}, refs[0].Filter.ChildCliqueNames)
 }
 
 func TestGmsResourceSharingEntries_Multinode(t *testing.T) {
@@ -385,12 +385,12 @@ func TestGmsResourceSharingEntries_Multinode(t *testing.T) {
 	assert.Equal(t, "svc-gpu-rank-0", refs[0].Name)
 	assert.Equal(t, grovev1alpha1.ResourceSharingScopePerReplica, refs[0].Scope)
 	require.NotNil(t, refs[0].Filter)
-	assert.Equal(t, []string{"svc-gms-0", "svc-ldr"}, refs[0].Filter.CliqueNames)
+	assert.Equal(t, []string{"svc-gms-0", "svc-ldr"}, refs[0].Filter.ChildCliqueNames)
 
 	assert.Equal(t, "svc-gpu-rank-1", refs[1].Name)
 	assert.Equal(t, grovev1alpha1.ResourceSharingScopePerReplica, refs[1].Scope)
 	require.NotNil(t, refs[1].Filter)
-	assert.Equal(t, []string{"svc-gms-1", "svc-wkr-1"}, refs[1].Filter.CliqueNames)
+	assert.Equal(t, []string{"svc-gms-1", "svc-wkr-1"}, refs[1].Filter.ChildCliqueNames)
 }
 
 // --- helpers ---

@@ -260,7 +260,7 @@ func gmsResourceClaimTemplateConfigs(serviceName string, resources *v1alpha1.Res
 		seen[r.Rank] = true
 		configs = append(configs, grovev1alpha1.ResourceClaimTemplateConfig{
 			Name: gmsRCTName(serviceName, r.Rank),
-			Template: resourcev1.ResourceClaimTemplateSpec{
+			TemplateSpec: resourcev1.ResourceClaimTemplateSpec{
 				Spec: resourcev1.ResourceClaimSpec{
 					Devices: resourcev1.DeviceClaim{
 						Requests: []resourcev1.DeviceRequest{
@@ -308,7 +308,7 @@ func gmsResourceSharingEntries(serviceName string, roles []ServiceRole) []grovev
 			Name:  gmsRCTName(serviceName, rank),
 			Scope: grovev1alpha1.ResourceSharingScopePerReplica,
 			Filter: &grovev1alpha1.ResourceSharingFilter{
-				CliqueNames: g.cliqueNames,
+				ChildCliqueNames: g.cliqueNames,
 			},
 		})
 	}
