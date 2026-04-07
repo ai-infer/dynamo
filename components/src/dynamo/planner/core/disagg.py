@@ -94,26 +94,26 @@ class DisaggPlanner:
         self.decode_planner.decode_worker_info = self.prefill_planner.decode_worker_info
         self.decode_planner.model_name = self.prefill_planner.model_name
 
-        # Start FPM tracking for both planners. DisaggPlanner bypasses each
-        # sub-planner's _async_init(), so we init subscribers explicitly here.
-        if self.enable_load:
-            if self.prefill_planner.runtime is not None:
-                await self.prefill_planner._init_fpm_subscriber()
-            if self.decode_planner.runtime is not None:
-                await self.decode_planner._init_fpm_subscriber()
+        if self.prefill_planner.runtime is not None:
+            await self.prefill_planner._init_fpm_subscriber()
+        if self.decode_planner.runtime is not None:
+            await self.decode_planner._init_fpm_subscriber()
+
+        await self.prefill_planner._bootstrap_regression()
+        await self.decode_planner._bootstrap_regression()
 
     async def run(self):
         """Main scaling loop. Call _async_init() before this."""
         self.shared_state.last_adjustment_time = time.time()
         self.shared_state.last_load_adjustment_time = time.time()
 
-        # FPM tracking (started in _async_init) replaces the former
-        # DirectRouterMetricsClient.run_sampling_loop().
         loops = []
         if self.enable_throughput:
             loops.append(self._throughput_loop())
         if self.enable_load:
             loops.append(self._load_loop())
+        elif self.enable_throughput:
+            loops.append(self._fpm_observation_loop())
 
         await asyncio.gather(*loops)
 
@@ -174,6 +174,18 @@ class DisaggPlanner:
                         )
 
             await asyncio.sleep(self.config.throughput_adjustment_interval / 10)
+
+    async def _fpm_observation_loop(self) -> None:
+        """Standalone FPM observation (when throughput-only, no load loop)."""
+        while True:
+            await asyncio.sleep(self.config.load_adjustment_interval)
+            num_p, num_d, _ = await self.prefill_planner.get_workers_info(
+                require_prefill=True, require_decode=True
+            )
+            self.shared_state.num_p_workers = num_p
+            self.shared_state.num_d_workers = num_d
+            self.prefill_planner.observe_fpm_load_stats()
+            self.decode_planner.observe_fpm_load_stats()
 
     async def _load_loop(self) -> None:
         """FPM-driven load-based scaling loop for disagg mode."""

@@ -20,11 +20,6 @@ from dynamo.planner.core.budget import (
 )
 from dynamo.planner.core.load.predictors import LOAD_PREDICTORS
 from dynamo.planner.core.state import PlannerSharedState
-from dynamo.planner.core.throughput.interpolation import (
-    DecodeInterpolator,
-    PrefillInterpolator,
-)
-from dynamo.planner.core.throughput.pre_swept_results import PreSweptResultsHelper
 from dynamo.planner.monitoring.planner_metrics import PlannerPrometheusMetrics
 from dynamo.planner.monitoring.traffic_metrics import Metrics, PrometheusAPIClient
 from dynamo.planner.monitoring.worker_info import WorkerInfo, resolve_worker_info
@@ -33,6 +28,7 @@ from dynamo.planner.offline.trace_data import extract_metrics_from_mooncake
 if TYPE_CHECKING:
     from dynamo.common.forward_pass_metrics import ForwardPassMetrics
     from dynamo.llm import FpmEventSubscriber
+
 from dynamo.runtime import DistributedRuntime
 from dynamo.runtime.logging import configure_dynamo_logging
 
@@ -49,7 +45,6 @@ class BasePlanner:
         self,
         runtime: Optional[DistributedRuntime],
         config: PlannerConfig,
-        dryrun: bool = False,
         shared_state: Optional[PlannerSharedState] = None,
         prometheus_metrics: Optional[PlannerPrometheusMetrics] = None,
         prometheus_traffic_client: Optional[PrometheusAPIClient] = None,
@@ -61,53 +56,48 @@ class BasePlanner:
             self.component_type = component_type
 
         self.config = config
-        self.dryrun = dryrun
         self.shared_state = shared_state or PlannerSharedState()
 
-        # Rely on getting model name from connector
+        self.runtime = runtime
+        self.namespace = config.namespace
         self.model_name: Optional[str] = None
+        self.connector: ConnectorType
 
-        if not self.dryrun:
-            self.runtime = runtime
-            self.namespace = config.namespace
-            self.connector: ConnectorType
-
-            if not config.no_operation:
-                # Initialize connector based on environment
-                if config.environment == "global-planner":
-                    assert config.global_planner_namespace is not None
-                    assert runtime is not None
-                    self.connector = GlobalPlannerConnector(
-                        runtime,
-                        self.namespace,
-                        config.global_planner_namespace,
-                        "GlobalPlanner",
-                        config.model_name,
-                    )
-                elif config.environment == "kubernetes":
-                    self.connector = KubernetesConnector(
-                        self.namespace, self.model_name
-                    )
-                elif config.environment == "virtual":
-                    assert runtime is not None
-                    self.connector = VirtualConnector(
-                        runtime,
-                        self.namespace,
-                        config.model_name,
-                    )
-                else:
-                    raise ValueError(f"Invalid environment: {config.environment}")
-
-            self.prometheus_traffic_client = (
-                prometheus_traffic_client
-                or PrometheusAPIClient(
-                    config.metric_pulling_prometheus_endpoint,
-                    config.namespace,
-                    metrics_source=config.throughput_metrics_source,
+        if connector is not None:
+            self.connector = connector
+        elif not config.no_operation:
+            if config.environment == "global-planner":
+                assert config.global_planner_namespace is not None
+                assert runtime is not None
+                self.connector = GlobalPlannerConnector(
+                    runtime,
+                    self.namespace,
+                    config.global_planner_namespace,
+                    "GlobalPlanner",
+                    config.model_name,
                 )
+            elif config.environment == "kubernetes":
+                self.connector = KubernetesConnector(self.namespace, self.model_name)
+            elif config.environment == "virtual":
+                assert runtime is not None
+                self.connector = VirtualConnector(
+                    runtime,
+                    self.namespace,
+                    config.model_name,
+                )
+            else:
+                raise ValueError(f"Invalid environment: {config.environment}")
+
+        self.prometheus_traffic_client = (
+            prometheus_traffic_client
+            or PrometheusAPIClient(
+                config.metric_pulling_prometheus_endpoint,
+                config.namespace,
+                metrics_source=config.throughput_metrics_source,
             )
-            if config.throughput_metrics_source == "router":
-                self.prometheus_traffic_client.warn_if_router_not_scraped()
+        )
+        if config.throughput_metrics_source == "router":
+            self.prometheus_traffic_client.warn_if_router_not_scraped()
 
         predictor_cls = LOAD_PREDICTORS[config.load_predictor]
         self.num_req_predictor = predictor_cls(config)
@@ -144,104 +134,51 @@ class BasePlanner:
                     if hasattr(p, "reset_idle_skip"):
                         p.reset_idle_skip()
 
-        # Load-based scaling flags.
-        # Argument validation (flag resolution, constraint checks, correction factor
-        # auto-disable) is handled by validate_sla_planner_args() in planner_argparse.
         self.enable_load = config.enable_load_scaling
         self.enable_throughput = config.enable_throughput_scaling
 
-        # Only create interpolators when throughput-based scaling is enabled
-        # (they require profiling data that isn't needed for load-based-only mode)
-        if self.enable_throughput:
-            if "use-pre-swept-results" in config.profile_results_dir:
-                config_list = config.profile_results_dir.split(":")
-                configs = {
-                    "gpu_type": config_list[1],
-                    "model": config_list[2],
-                    "framework": config_list[3],
-                    "framework_version": config_list[4],
-                    "tp": int(config_list[5]),
-                    "dp": int(config_list[6]),
-                    "pp": int(config_list[7]),
-                    "block_size": int(config_list[8]),
-                    "max_batch_size": int(config_list[9]),
-                    "gpu_count": int(config_list[10]),
-                }
-                if self.dryrun:
-                    pre_swept_results_helper = PreSweptResultsHelper(
-                        configs["gpu_type"], configs["framework"], configs["model"]
-                    )
-                    raw_data = pre_swept_results_helper.select_data("prefill", configs)
-                    self.prefill_interpolator = PrefillInterpolator(raw_data=raw_data)
-                    raw_data = pre_swept_results_helper.select_data("decode", configs)
-                    self.decode_interpolator = DecodeInterpolator(raw_data=raw_data)
-                else:
-                    raise ValueError(
-                        "Cannot set profile_results_dir to 'use-pre-swept-results' in non-dryrun mode"
-                    )
-            else:
-                self.prefill_interpolator = PrefillInterpolator(
-                    config.profile_results_dir
-                )
-                self.decode_interpolator = DecodeInterpolator(
-                    config.profile_results_dir
-                )
-
-        # WorkerInfo: finalized by _init_worker_info() at the start of run().
-        # Empty placeholders until then.
         self.prefill_worker_info = WorkerInfo()
         self.decode_worker_info = WorkerInfo()
 
+        self.prefill_client = None
+        self.workers_client = None
+
+        self.prometheus_port = config.metric_reporting_prometheus_port
         self.prometheus_metrics: PlannerPrometheusMetrics | None = None
-        if not self.dryrun:
-            self.prefill_client = None
-            self.workers_client = None
 
-            self.prometheus_port = config.metric_reporting_prometheus_port
-
-            if prometheus_metrics is None:
-                self.prometheus_metrics = PlannerPrometheusMetrics()
-            else:
-                self.prometheus_metrics = prometheus_metrics
-
-            # Start Prometheus HTTP server if port is specified
-            if start_prometheus_server and self.prometheus_port != 0:
-                try:
-                    start_http_server(self.prometheus_port)
-                    logger.info(
-                        f"Started Prometheus metrics server on port {self.prometheus_port}"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to start Prometheus metrics server: {e}")
+        if prometheus_metrics is None:
+            self.prometheus_metrics = PlannerPrometheusMetrics()
         else:
-            self.prometheus_port = 0
             self.prometheus_metrics = prometheus_metrics
 
-        self.p_correction_factor = 1.0
-        self.d_correction_factor = 1.0
-        if self.dryrun:
-            self.no_correction = True
-        else:
-            self.no_correction = config.no_correction
+        if start_prometheus_server and self.prometheus_port != 0:
+            try:
+                start_http_server(self.prometheus_port)
+                logger.info(
+                    f"Started Prometheus metrics server on port {self.prometheus_port}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to start Prometheus metrics server: {e}")
 
-        if self.enable_load:
-            from dynamo.planner.core.load.fpm_regression import (
-                DecodeRegressionModel,
-                PrefillRegressionModel,
+        from dynamo.planner.core.perf_model import (
+            DecodeRegressionModel,
+            PrefillRegressionModel,
+        )
+
+        self.fpm_subscriber: "Optional[FpmEventSubscriber]" = None
+
+        if self.component_type == SubComponentType.PREFILL:
+            self.ttft_regression = PrefillRegressionModel(
+                max_num_fpm_samples=self.config.max_num_fpm_samples,
+                min_observations=self.config.load_min_observations,
+                bucket_count=self.config.fpm_sample_bucket_size,
             )
-
-            self.fpm_subscriber: "Optional[FpmEventSubscriber]" = None
-
-            if self.component_type == SubComponentType.PREFILL:
-                self.ttft_regression = PrefillRegressionModel(
-                    window_size=self.config.load_learning_window,
-                    min_observations=self.config.load_min_observations,
-                )
-            elif self.component_type == SubComponentType.DECODE:
-                self.itl_regression = DecodeRegressionModel(
-                    window_size=self.config.load_learning_window,
-                    min_observations=self.config.load_min_observations,
-                )
+        elif self.component_type == SubComponentType.DECODE:
+            self.itl_regression = DecodeRegressionModel(
+                max_num_fpm_samples=self.config.max_num_fpm_samples,
+                min_observations=self.config.load_min_observations,
+                bucket_count=self.config.fpm_sample_bucket_size,
+            )
 
     @property
     def last_metrics(self) -> Metrics:
@@ -271,17 +208,13 @@ class BasePlanner:
 
     async def _async_init(self):
         """Async initialization: connector init, deployment validation, WorkerInfo."""
-        if (
-            not self.dryrun
-            and hasattr(self, "connector")
-            and hasattr(self.connector, "_async_init")
-        ):
+        if hasattr(self, "connector") and hasattr(self.connector, "_async_init"):
             await self.connector._async_init()
 
         require_prefill = self.component_type == SubComponentType.PREFILL
         require_decode = self.component_type == SubComponentType.DECODE
 
-        if not self.dryrun and not self.config.no_operation:
+        if not self.config.no_operation:
             defaults = WORKER_COMPONENT_NAMES.get(self.config.backend)
 
             logger.info("Validating deployment...")
@@ -315,10 +248,43 @@ class BasePlanner:
             require_decode=require_decode,
         )
 
-        # Start FPM tracking if load-based scaling is enabled.
-        # The subscriber auto-discovers FPM publishers for this component.
-        if self.enable_load and self.runtime is not None:
+        if self.runtime is not None:
             await self._init_fpm_subscriber()
+
+        await self._bootstrap_regression()
+
+    async def _bootstrap_regression(self) -> None:
+        """Fetch pre-deployment FPM data and bootstrap the regression model."""
+        from dynamo.planner.monitoring.perf_metrics import fetch_pre_deployment_metrics
+
+        worker_info = (
+            self.prefill_worker_info
+            if self.component_type == SubComponentType.PREFILL
+            else self.decode_worker_info
+        )
+        try:
+            fpms = await fetch_pre_deployment_metrics(
+                runtime=self.runtime,
+                namespace=self.namespace,
+                worker_info=worker_info,
+                profile_results_dir=self.config.profile_results_dir,
+                component_type=self.component_type,
+            )
+            if self.component_type == SubComponentType.PREFILL:
+                self.ttft_regression.load_benchmark_fpms(fpms)
+            elif self.component_type == SubComponentType.DECODE:
+                self.itl_regression.load_benchmark_fpms(fpms)
+            logger.info(
+                f"Bootstrapped {self.component_type.value} regression with "
+                f"{len(fpms)} pre-deployment FPMs"
+            )
+        except Exception as e:
+            if self.enable_throughput:
+                raise
+            logger.warning(
+                f"No pre-deployment data for {self.component_type.value} regression: {e}. "
+                "Load-based scaling will learn from live FPM only."
+            )
 
     async def _init_fpm_subscriber(self) -> None:
         """Create and start the FPM subscriber for load-based scaling."""
@@ -562,27 +528,12 @@ class BasePlanner:
             logger.error(f"Failed to predict load: {e}")
             return None, None, None
 
-    def dryrun_observe_traffic_stats(
-        self, num_req: int, isl_avg: float, osl_avg: float
-    ):
-        self.num_req_predictor.add_data_point(num_req)
-        self.isl_predictor.add_data_point(isl_avg)
-        self.osl_predictor.add_data_point(osl_avg)
-
     def plan_adjustment(self) -> Optional[int]:
         if not self.last_metrics.is_valid():
             logger.info(
                 "Metrics contain None or NaN values (no active requests), skipping adjustment"
             )
             return None
-
-        if not self.no_correction:
-            try:
-                if not self._update_correction_factor():
-                    return None
-            except Exception as e:
-                logger.error(f"Failed to correct prediction factors: {e}")
-                return None
 
         next_num_req, next_isl, next_osl = self.predict_load()
         if next_num_req is None or next_isl is None or next_osl is None:
@@ -608,9 +559,6 @@ class BasePlanner:
     def _compute_replica_requirements(
         self, next_num_req: float, next_isl: float, next_osl: float
     ) -> int:
-        raise NotImplementedError
-
-    def _update_correction_factor(self) -> bool:
         raise NotImplementedError
 
     def _component_name(self) -> str:
@@ -646,18 +594,7 @@ class BasePlanner:
         ]
         await self.connector.set_component_replicas(target_replicas, blocking=False)
 
-    async def _apply_scaling_blocking(self, desired_replicas: int) -> None:
-        """Apply scaling without blocking so the loop continues observing metrics."""
-        if self.config.no_operation:
-            return
-        target_replicas = [
-            TargetReplica(
-                sub_component_type=self.component_type,
-                component_name=self._component_name(),
-                desired_replicas=desired_replicas,
-            )
-        ]
-        await self.connector.set_component_replicas(target_replicas, blocking=False)
+    _apply_scaling_blocking = _apply_scaling
 
     @staticmethod
     def _reconcile_fpm_worker_count(
@@ -917,6 +854,24 @@ class BasePlanner:
                 pending_desired = desired_replicas
                 await self._apply_scaling_blocking(desired_replicas)
 
+    async def _fpm_observation_loop(
+        self, require_prefill: bool, require_decode: bool
+    ) -> None:
+        """Standalone FPM observation loop that keeps the regression model fresh.
+
+        Runs at load_adjustment_interval regardless of scaling mode. When
+        load-based scaling is enabled, the _load_loop already calls
+        observe_fpm_load_stats(), so this loop is skipped.
+        """
+        while True:
+            await asyncio.sleep(self.config.load_adjustment_interval)
+            num_p, num_d, _ = await self.get_workers_info(
+                require_prefill=require_prefill, require_decode=require_decode
+            )
+            self.shared_state.num_p_workers = num_p
+            self.shared_state.num_d_workers = num_d
+            self.observe_fpm_load_stats()
+
     async def run(self):
         """Main scaling loop. Call _async_init() before this."""
         require_prefill = self.component_type == SubComponentType.PREFILL
@@ -925,13 +880,12 @@ class BasePlanner:
         self.shared_state.last_adjustment_time = time.time()
         self.shared_state.last_load_adjustment_time = time.time()
 
-        # Build list of concurrent loops based on enabled scaling modes.
-        # FPM tracking (started in _async_init) replaces the former
-        # DirectRouterMetricsClient.run_sampling_loop().
         loops = []
         if self.enable_throughput:
             loops.append(self._throughput_loop(require_prefill, require_decode))
         if self.enable_load:
             loops.append(self._load_loop(require_prefill, require_decode))
+        elif self.enable_throughput:
+            loops.append(self._fpm_observation_loop(require_prefill, require_decode))
 
         await asyncio.gather(*loops)

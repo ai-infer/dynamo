@@ -75,42 +75,29 @@ class PrefillPlanner(BasePlanner):
             label="prefill TTFT",
         )
 
-    def _update_correction_factor(self) -> bool:
-        assert self.last_metrics.isl is not None and self.last_metrics.ttft is not None
-        expect_ttft = self.prefill_interpolator.interpolate_ttft(self.last_metrics.isl)
-        self.p_correction_factor = self.last_metrics.ttft / expect_ttft
-        logger.info(f"Correction factor (prefill TTFT): {self.p_correction_factor:.3f}")
-        if self.prometheus_port != 0 and self.prometheus_metrics is not None:
-            self.prometheus_metrics.p_correction_factor.set(self.p_correction_factor)
-        return True
-
     def _compute_replica_requirements(
         self, next_num_req: float, next_isl: float, next_osl: float
     ) -> int:
         pred_prefill_throughput = (
-            next_num_req
-            * next_isl
-            / self.config.throughput_adjustment_interval
-            * min(1, self.p_correction_factor)
+            next_num_req * next_isl / self.config.throughput_adjustment_interval
         )
-        p_thpt_per_gpu = self.prefill_interpolator.interpolate_thpt_per_gpu(next_isl)
-        if p_thpt_per_gpu <= 0:
+        (
+            engine_thpt,
+            actual_ttft_ms,
+        ) = self.ttft_regression.find_best_engine_prefill_thpt(
+            ttft_sla=self.config.ttft, isl=next_isl
+        )
+        if engine_thpt <= 0:
             logger.warning(
-                f"p_thpt_per_gpu is {p_thpt_per_gpu} "
-                "(no throughput satisfies TTFT target), falling back to min_endpoint"
+                f"engine_prefill_thpt is {engine_thpt}, falling back to min_endpoint"
             )
             return self.config.min_endpoint
-        assert self.config.prefill_engine_num_gpu is not None
-        next_num_p = math.ceil(
-            pred_prefill_throughput
-            / p_thpt_per_gpu
-            / self.config.prefill_engine_num_gpu
-        )
+        next_num_p = math.ceil(pred_prefill_throughput / engine_thpt)
         next_num_p = max(next_num_p, self.config.min_endpoint)
         logger.info(
-            f"Prefill calculation: {pred_prefill_throughput:.2f}(p_thpt) / "
-            f"{p_thpt_per_gpu * self.config.prefill_engine_num_gpu:.2f}(p_engine_cap) = "
-            f"{next_num_p}(num_p)"
+            f"Prefill calculation: {pred_prefill_throughput:.2f}(demand tps) / "
+            f"{engine_thpt:.2f}(engine_thpt) = {next_num_p}(num_p), "
+            f"est_ttft={actual_ttft_ms:.1f}ms"
         )
         return next_num_p
 
