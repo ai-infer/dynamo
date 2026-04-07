@@ -2192,6 +2192,12 @@ async fn video_stream(
     // dropped early (client disconnect), the armed stream_handle signals the connection
     // monitor, which cancels the engine context.
     stream_handle.arm();
+
+    // Pre-set inflight to Cancelled so that if the stream body is dropped unexpectedly
+    // (client disconnect causing axum to drop the response), the guard reports Cancelled
+    // instead of the default Internal. The happy path overrides this via mark_ok().
+    inflight.mark_error(ErrorType::Cancelled);
+
     let monitored_stream = async_stream::stream! {
         tokio::pin!(mjpeg_stream);
         loop {
