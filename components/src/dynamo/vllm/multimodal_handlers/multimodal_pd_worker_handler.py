@@ -31,7 +31,11 @@ from ..multimodal_utils import (
     PatchedTokensPrompt,
     vLLMMultimodalRequest,
 )
-from ..multimodal_utils.model import is_qwen_vl_model
+from ..multimodal_utils.model import (
+    construct_kimi_vision_chunk_data,
+    is_kimi_k25_model,
+    is_qwen_vl_model,
+)
 from ..multimodal_utils.prefill_worker_utils import MultiModalEmbeddingLoader
 
 logger = logging.getLogger(__name__)
@@ -116,8 +120,8 @@ class MultimodalPDWorkerHandler(BaseWorkerHandler[dict, dict]):
 
     def _parse_frontend_request(
         self, raw_request: dict
-    ) -> tuple[vLLMMultimodalRequest, list[str]]:
-        """Parse a raw frontend dict into a vLLMMultimodalRequest and image URLs.
+    ) -> tuple[vLLMMultimodalRequest, list[Any]]:
+        """Parse a raw frontend dict into a vLLMMultimodalRequest and image inputs.
 
         The Rust frontend sends a dict with ``token_ids`` and
         ``multi_modal_data`` (containing image URLs). This method extracts
@@ -126,14 +130,14 @@ class MultimodalPDWorkerHandler(BaseWorkerHandler[dict, dict]):
         """
         request_id = str(uuid.uuid4().hex)
 
-        image_urls: list[str] = []
+        image_inputs: list[Any] = []
         mm_data = raw_request.get("multi_modal_data")
         if mm_data is not None:
             for item in mm_data.get(IMAGE_URL_KEY, []):
                 if isinstance(item, dict) and "Url" in item:
-                    image_urls.append(item["Url"])
+                    image_inputs.append(item["Url"])
                 elif isinstance(item, dict) and "Decoded" in item:
-                    image_urls.append(item["Decoded"])
+                    image_inputs.append(item["Decoded"])
 
         sampling_params = build_sampling_params(
             raw_request, self.default_sampling_params
@@ -148,18 +152,31 @@ class MultimodalPDWorkerHandler(BaseWorkerHandler[dict, dict]):
             model=raw_request.get("model"),
         )
 
-        return request, image_urls
+        return request, image_inputs
 
     # ── Multimodal data loading ──────────────────────────────────────
 
     async def _load_multimodal_data(
-        self, image_urls: list[str], request_id: str, context=None
+        self, image_urls: list[Any], request_id: str, context=None
     ) -> dict[str, Any]:
         """Fetch embeddings from encode workers and load into an engine-ready dict.
 
         Returns an empty dict when no encode worker is configured or no images
         are present.
         """
+
+        if not image_urls:
+            return {}
+
+        if is_kimi_k25_model(self.config.model):
+            image_mm_items = [
+                {"Url": item} if isinstance(item, str) else {"Decoded": item}
+                for item in image_urls
+            ]
+            images = await self.image_loader.load_image_batch(
+                image_mm_items
+            )
+            return construct_kimi_vision_chunk_data(images) if images else {}
 
         return await self.embedding_loader.load_multimodal_embeddings(
             image_urls,

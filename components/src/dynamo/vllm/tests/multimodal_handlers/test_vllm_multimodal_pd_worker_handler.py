@@ -69,13 +69,15 @@ def _make_handler(
     if config is None:
         config = _make_config()
     with patch.object(mod.BaseWorkerHandler, "__init__", return_value=None):
-        return mod.MultimodalPDWorkerHandler(
+        handler = mod.MultimodalPDWorkerHandler(
             runtime=MagicMock(),
             engine_client=MagicMock(),
             config=config,
             encode_worker_client=encode_worker_client,
             decode_worker_client=decode_worker_client,
         )
+    handler.image_loader = MagicMock()
+    return handler
 
 
 def _make_raw_frontend_request(image_urls: list[str] | None = None) -> dict:
@@ -158,6 +160,26 @@ class TestParseFrontendRequest:
 
         assert image_urls == ["http://a.png", "http://b.png"]
 
+    def test_extracts_decoded_image_metadata(self):
+        """Preserves Decoded image metadata for frontend-decoded requests."""
+        handler = _make_handler()
+        handler.default_sampling_params = {}
+
+        decoded_metadata = {"handle": "nixl-1"}
+        raw = {
+            "token_ids": [1, 2, 3],
+            "multi_modal_data": {
+                "image_url": [{"Decoded": decoded_metadata}],
+            },
+            "sampling_options": {},
+            "stop_conditions": {},
+            "output_options": {},
+        }
+        request, image_inputs = handler._parse_frontend_request(raw)
+
+        assert request.engine_prompt["prompt_token_ids"] == [1, 2, 3]
+        assert image_inputs == [decoded_metadata]
+
 
 class TestLoadMultimodalData:
     @pytest.mark.asyncio
@@ -207,6 +229,59 @@ class TestLoadMultimodalData:
             await handler._load_multimodal_data(["http://img.png"], "req-1")
 
         assert mock_load.call_args.kwargs["model"] == handler.config.model
+
+    @pytest.mark.asyncio
+    async def test_kimi_uses_raw_vision_chunk_path(self):
+        """Kimi-K2.5 should bypass embedding transfer and send raw vision_chunk data."""
+        mock_client = MagicMock()
+        handler = _make_handler(
+            config=_make_config(model="moonshotai/Kimi-K2.5"),
+            encode_worker_client=mock_client,
+        )
+
+        fake_image = object()
+        handler.image_loader.load_image_batch = AsyncMock(return_value=[fake_image])
+
+        with patch.object(
+            handler.embedding_loader,
+            "load_multimodal_embeddings",
+            new_callable=AsyncMock,
+        ) as mock_load:
+            result = await handler._load_multimodal_data(["http://img.png"], "req-1")
+
+        handler.image_loader.load_image_batch.assert_awaited_once_with(
+            [{"Url": "http://img.png"}]
+        )
+        mock_load.assert_not_awaited()
+        assert result == {
+            "vision_chunk": [
+                {"type": "image", "image": fake_image, "uuid": None},
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_kimi_preserves_decoded_inputs(self):
+        """Kimi-K2.5 should keep Decoded inputs on the raw image-loading path."""
+        mock_client = MagicMock()
+        handler = _make_handler(
+            config=_make_config(model="moonshotai/Kimi-K2.5"),
+            encode_worker_client=mock_client,
+        )
+
+        decoded_metadata = {"handle": "nixl-1"}
+        fake_image = object()
+        handler.image_loader.load_image_batch = AsyncMock(return_value=[fake_image])
+
+        result = await handler._load_multimodal_data([decoded_metadata], "req-1")
+
+        handler.image_loader.load_image_batch.assert_awaited_once_with(
+            [{"Decoded": decoded_metadata}]
+        )
+        assert result == {
+            "vision_chunk": [
+                {"type": "image", "image": fake_image, "uuid": None},
+            ]
+        }
 
 
 class TestGenerateAgg:
