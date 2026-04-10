@@ -284,10 +284,7 @@ def construct_mm_data(
 ) -> Dict[str, Any]:
     """Construct multimodal data for a vLLM request for models that require additional parameters alongside the embeddings"""
 
-    # Handle video models
-    if is_model_supported(model, SupportedModels.LLAVA_NEXT_VIDEO_7B):
-        if video_numpy is None:
-            raise ValueError("No video frames provided.")
+    if video_numpy is not None:
         return {"video": video_numpy}
 
     # Handle image models - validate image embeddings first
