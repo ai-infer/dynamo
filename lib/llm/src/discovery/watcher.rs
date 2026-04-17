@@ -20,7 +20,7 @@ use dynamo_runtime::{
         ManyOut, Operator, RouterMode, SegmentSource, ServiceBackend, SingleIn, Source,
         network::egress::push_router::PushRouter,
     },
-    protocols::annotated::Annotated,
+    protocols::{EndpointId, annotated::Annotated},
 };
 
 use crate::{
@@ -65,12 +65,6 @@ fn worker_set_key(namespace: &str, model_type: ModelType) -> String {
 pub enum ModelUpdate {
     Added(ModelDeploymentCard),
     Removed(ModelDeploymentCard),
-}
-
-#[derive(Debug, Clone)]
-struct DiscoveredModelCard {
-    id: ModelCardInstanceId,
-    card: ModelDeploymentCard,
 }
 
 pub struct ModelWatcher {
@@ -314,7 +308,7 @@ impl ModelWatcher {
 
         // Query discovery for all remaining instances of this model
         let active_instances = self
-            .cards_for_model_instances(&model_name, namespace_filter)
+            .cards_for_model_with_endpoints(&model_name, namespace_filter)
             .await
             .with_context(|| model_name.clone())?;
 
@@ -322,8 +316,8 @@ impl ModelWatcher {
         // In disaggregated deployments, prefill and decode are different components
         // in the same namespace, so we must check at the component level to avoid
         // removing one type's WorkerSet while the other still has workers.
-        let component_has_instances = active_instances.iter().any(|instance| {
-            instance.id.namespace == *worker_namespace && instance.id.component == *worker_component
+        let component_has_instances = active_instances.iter().any(|(eid, _)| {
+            eid.namespace == *worker_namespace && eid.component == *worker_component
         });
 
         if !component_has_instances {
@@ -342,9 +336,6 @@ impl ModelWatcher {
 
         // Check if the Model still has instances in any namespace
         if !active_instances.is_empty() {
-            self.reconcile_active_model_instances(&active_instances)
-                .await
-                .with_context(|| format!("reconcile active model instances for {model_name}"))?;
             tracing::debug!(
                 model_name,
                 active_instance_count = active_instances.len(),
@@ -834,43 +825,8 @@ impl ModelWatcher {
         Ok(())
     }
 
-    async fn reconcile_active_model_instances(
-        &self,
-        active_instances: &[DiscoveredModelCard],
-    ) -> anyhow::Result<()> {
-        for instance in active_instances {
-            let ws_key = worker_set_key(&instance.id.namespace, instance.card.model_type);
-            if let Some(model) = self.manager.get_model(instance.card.name())
-                && model.has_worker_set(&ws_key)
-            {
-                continue;
-            }
-
-            if let Some(model) = self.manager.get_model(instance.card.name())
-                && !model.is_checksum_compatible(&ws_key, instance.card.mdcsum())
-            {
-                tracing::debug!(
-                    model_name = instance.card.name(),
-                    namespace = instance.id.namespace,
-                    "Skipping reconciliation because the existing WorkerSet in this namespace has a different checksum"
-                );
-                continue;
-            }
-
-            let mut card = instance.card.clone();
-            self.handle_put(&instance.id, &mut card).await?;
-            tracing::info!(
-                model_name = card.name(),
-                namespace = instance.id.namespace,
-                "Reconciled active model instance after worker removal"
-            );
-        }
-
-        Ok(())
-    }
-
-    /// All the registered ModelDeploymentCards, keyed by their discovery ID.
-    async fn all_cards(&self) -> anyhow::Result<Vec<DiscoveredModelCard>> {
+    /// All the registered ModelDeploymentCard with the EndpointId they are attached to, one per instance
+    async fn all_cards(&self) -> anyhow::Result<Vec<(EndpointId, ModelDeploymentCard)>> {
         let discovery = self.drt.discovery();
         let instances = discovery.list(DiscoveryQuery::AllModels).await?;
 
@@ -878,20 +834,16 @@ impl ModelWatcher {
         for instance in instances {
             match instance.deserialize_model::<ModelDeploymentCard>() {
                 Ok(card) => {
-                    let id = match &instance {
+                    let endpoint_id = match &instance {
                         dynamo_runtime::discovery::DiscoveryInstance::Model {
                             namespace,
                             component,
                             endpoint,
-                            instance_id,
-                            model_suffix,
                             ..
-                        } => ModelCardInstanceId {
+                        } => EndpointId {
                             namespace: namespace.clone(),
                             component: component.clone(),
-                            endpoint: endpoint.clone(),
-                            instance_id: *instance_id,
-                            model_suffix: model_suffix.clone(),
+                            name: endpoint.clone(),
                         },
                         _ => {
                             tracing::error!(
@@ -900,7 +852,7 @@ impl ModelWatcher {
                             continue;
                         }
                     };
-                    results.push(DiscoveredModelCard { id, card });
+                    results.push((endpoint_id, card));
                 }
                 Err(err) => {
                     tracing::error!(%err, "Failed to deserialize model card");
@@ -917,22 +869,24 @@ impl ModelWatcher {
         namespace_filter: &NamespaceFilter,
     ) -> anyhow::Result<Vec<ModelDeploymentCard>> {
         Ok(self
-            .cards_for_model_instances(model_name, namespace_filter)
+            .cards_for_model_with_endpoints(model_name, namespace_filter)
             .await?
             .into_iter()
-            .map(|instance| instance.card)
+            .map(|(_, card)| card)
             .collect())
     }
 
-    async fn cards_for_model_instances(
+    /// Like `cards_for_model` but also returns the EndpointId for each card,
+    /// allowing callers to filter by namespace.
+    async fn cards_for_model_with_endpoints(
         &self,
         model_name: &str,
         namespace_filter: &NamespaceFilter,
-    ) -> anyhow::Result<Vec<DiscoveredModelCard>> {
+    ) -> anyhow::Result<Vec<(EndpointId, ModelDeploymentCard)>> {
         let mut all = self.all_cards().await?;
-        all.retain(|instance| {
-            let matches_name = instance.card.name() == model_name;
-            let matches_namespace = namespace_filter.matches(&instance.id.namespace);
+        all.retain(|(endpoint_id, card)| {
+            let matches_name = card.name() == model_name;
+            let matches_namespace = namespace_filter.matches(&endpoint_id.namespace);
             matches_name && matches_namespace
         });
         Ok(all)
