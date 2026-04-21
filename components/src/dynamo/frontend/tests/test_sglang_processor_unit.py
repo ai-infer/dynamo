@@ -9,7 +9,7 @@ incremental detokenization, error handling, and deprecation warnings.
 Parallels test_vllm_unit.py for the vLLM backend.
 """
 
-
+import json
 import pytest
 from sglang.srt.utils.hf_transformers_utils import get_tokenizer
 
@@ -794,6 +794,66 @@ class TestReasoningParsing:
 
         assert "think about this" in reasoning
         assert "42" in content
+
+    def test_structured_output_promotes_complete_reasoning_json(self, tokenizer):
+        """Structured output should promote complete JSON out of reasoning."""
+        from sglang.srt.parser.reasoning_parser import ReasoningParser
+
+        rp = ReasoningParser(model_type="qwen3", stream_reasoning=True)
+        post = SglangStreamingPostProcessor(
+            tokenizer=tokenizer, tool_call_parser=None, reasoning_parser=rp
+        )
+        post.set_structured_output_request(True)
+
+        text = '<think>{"name":"alice"}</think>'
+        token_ids = tokenizer.encode(text)
+        reasoning = ""
+        content = ""
+        for i in range(0, len(token_ids), 5):
+            batch = token_ids[i : i + 5]
+            is_last = i + 5 >= len(token_ids)
+            choice = post.process_output(
+                {"token_ids": batch, "finish_reason": "stop" if is_last else None}
+            )
+            if choice:
+                delta = choice.get("delta", {})
+                reasoning += delta.get("reasoning_content", "")
+                content += delta.get("content", "")
+
+        assert content == '{"name":"alice"}'
+        assert reasoning == ""
+
+    def test_structured_output_strips_suffix_only_when_json_becomes_valid(
+        self, tokenizer
+    ):
+        """Only remove suffix markers when they are outside valid JSON."""
+        post = SglangStreamingPostProcessor(
+            tokenizer=tokenizer, tool_call_parser=None, reasoning_parser=None
+        )
+        post.set_structured_output_request(True)
+
+        choice = post.process_output(
+            {
+                "token_ids": tokenizer.encode('{"name":"alice"}[EOS]'),
+                "finish_reason": "stop",
+            }
+        )
+        assert choice is not None
+        assert choice["delta"]["content"] == '{"name":"alice"}'
+        assert json.loads(choice["delta"]["content"]) == {"name": "alice"}
+
+        post = SglangStreamingPostProcessor(
+            tokenizer=tokenizer, tool_call_parser=None, reasoning_parser=None
+        )
+        post.set_structured_output_request(True)
+        choice = post.process_output(
+            {
+                "token_ids": tokenizer.encode('{"value":"tag[EOS]"}'),
+                "finish_reason": "stop",
+            }
+        )
+        assert choice is not None
+        assert choice["delta"]["content"] == '{"value":"tag[EOS]"}'
 
 
 # ---------------------------------------------------------------------------

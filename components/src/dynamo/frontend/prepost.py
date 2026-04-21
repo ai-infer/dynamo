@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -281,6 +282,59 @@ class StreamingPostProcessor:
             stripped = stripped.replace(marker, "")
         return stripped.strip() == ""
 
+    def _is_structured_output_request(self) -> bool:
+        return getattr(self.request_for_sampling, "response_format", None) is not None
+
+    @staticmethod
+    def _is_complete_json(text: str | None) -> bool:
+        if not text:
+            return False
+        try:
+            json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        return True
+
+    def _normalize_structured_output_text(self, text: str | None) -> str | None:
+        if not text or self._is_complete_json(text):
+            return text
+
+        candidate = text
+        suffixes = (*self._control_markers, "[EOS]")
+        while candidate:
+            trimmed = candidate.rstrip()
+            matched_suffix = next(
+                (suffix for suffix in suffixes if trimmed.endswith(suffix)),
+                None,
+            )
+            if matched_suffix is None:
+                return text
+
+            candidate = trimmed[: -len(matched_suffix)].rstrip()
+            if self._is_complete_json(candidate):
+                return candidate
+
+        return text
+
+    def _prioritize_structured_output(
+        self, content: str | None, reasoning: str | None
+    ) -> tuple[str | None, str | None]:
+        if not self._is_structured_output_request():
+            return content, reasoning
+
+        normalized_content = self._normalize_structured_output_text(content)
+        normalized_reasoning = self._normalize_structured_output_text(reasoning)
+
+        if (
+            not normalized_content
+            and normalized_reasoning
+            and self._is_complete_json(normalized_reasoning)
+            and not self.in_progress_tool_calls
+        ):
+            return normalized_reasoning, None
+
+        return normalized_content, normalized_reasoning
+
     def _should_parse_tools(self) -> bool:
         return (
             self.tool_parser is not None
@@ -385,9 +439,10 @@ class StreamingPostProcessor:
         delta: dict[str, Any] = {}
         if self._fast_plain_text:
             if delta_text:
+                content, _ = self._prioritize_structured_output(delta_text, None)
                 delta = {
                     "role": "assistant",
-                    "content": delta_text,
+                    "content": content,
                 }
             elif output.finish_reason:
                 delta = {}
@@ -524,13 +579,16 @@ class StreamingPostProcessor:
                 choice = self._emit_tool_calls_choice(output)
         elif delta_message.content or delta_message.reasoning:
             delta = {"role": "assistant"}
-            content = delta_message.content
+            content, reasoning = self._prioritize_structured_output(
+                delta_message.content,
+                delta_message.reasoning,
+            )
             if self.in_progress_tool_calls and self._is_control_only_content(content):
                 content = None
             if content:
                 delta["content"] = content
-            if delta_message.reasoning:
-                delta["reasoning_content"] = delta_message.reasoning
+            if reasoning:
+                delta["reasoning_content"] = reasoning
             if self.in_progress_tool_calls:
                 delta["tool_calls"] = self._dump_in_progress_tool_calls()
                 self.in_progress_tool_calls.clear()

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -173,6 +174,10 @@ class SglangStreamingPostProcessor:
         self.tool_call_parser = tool_call_parser
         self.reasoning_parser = reasoning_parser
         self._fast_plain_text = tool_call_parser is None and reasoning_parser is None
+        self._control_markers = tuple(
+            t for t in getattr(tokenizer, "all_special_tokens", ()) if t
+        )
+        self._structured_output_request = False
 
         self._all_token_ids: list[int] = []
         # Tool call accumulation.  SGLang's streaming parser returns
@@ -186,6 +191,59 @@ class SglangStreamingPostProcessor:
         self._tool_call_ids: dict[int, str] = {}  # tool_index -> call_id
         self._tool_call_names: dict[int, str] = {}  # tool_index -> name
         self._tool_call_args: dict[int, list[str]] = {}  # tool_index -> arg chunks
+
+    def set_structured_output_request(self, enabled: bool) -> None:
+        self._structured_output_request = enabled
+
+    @staticmethod
+    def _is_complete_json(text: str | None) -> bool:
+        if not text:
+            return False
+        try:
+            json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        return True
+
+    def _normalize_structured_output_text(self, text: str | None) -> str | None:
+        if not text or self._is_complete_json(text):
+            return text
+
+        candidate = text
+        suffixes = (*self._control_markers, "[EOS]")
+        while candidate:
+            trimmed = candidate.rstrip()
+            matched_suffix = next(
+                (suffix for suffix in suffixes if trimmed.endswith(suffix)),
+                None,
+            )
+            if matched_suffix is None:
+                return text
+
+            candidate = trimmed[: -len(matched_suffix)].rstrip()
+            if self._is_complete_json(candidate):
+                return candidate
+
+        return text
+
+    def _prioritize_structured_output(
+        self, content: str | None, reasoning: str | None
+    ) -> tuple[str | None, str | None]:
+        if not self._structured_output_request:
+            return content, reasoning
+
+        normalized_content = self._normalize_structured_output_text(content)
+        normalized_reasoning = self._normalize_structured_output_text(reasoning)
+
+        if (
+            not normalized_content
+            and normalized_reasoning
+            and self._is_complete_json(normalized_reasoning)
+            and not self._tool_call_names
+        ):
+            return normalized_reasoning, None
+
+        return normalized_content, normalized_reasoning
 
     def _incremental_decode(self, new_token_ids: list[int]) -> str:
         """Decode new tokens with lookback window for multi-byte char boundaries.
@@ -238,9 +296,10 @@ class SglangStreamingPostProcessor:
 
         if self._fast_plain_text:
             if delta_text:
+                content_text, _ = self._prioritize_structured_output(delta_text, None)
                 return {
                     "index": 0,
-                    "delta": {"role": "assistant", "content": delta_text},
+                    "delta": {"role": "assistant", "content": content_text},
                     "finish_reason": finish_reason,
                     "logprobs": None,
                 }
@@ -279,6 +338,11 @@ class SglangStreamingPostProcessor:
                     self._tool_call_names[idx] = tc.name
                 if tc.parameters:
                     self._tool_call_args.setdefault(idx, []).append(tc.parameters)
+
+        content_text, reasoning_text = self._prioritize_structured_output(
+            content_text,
+            reasoning_text,
+        )
 
         # -- Assemble delta --
         delta: dict[str, Any] = {"role": "assistant"}

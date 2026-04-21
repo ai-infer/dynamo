@@ -326,6 +326,7 @@ class SglangProcessor:
             tool_call_parser=pre.tool_call_parser,
             reasoning_parser=pre.reasoning_parser,
         )
+        post.set_structured_output_request(request.get("response_format") is not None)
 
         async for item in self._generate_and_stream(
             request_id, request, dynamo_preproc, tokens, post
@@ -379,6 +380,7 @@ class SglangProcessor:
             tool_call_parser=tool_call_parser,
             reasoning_parser=reasoning_parser,
         )
+        post.set_structured_output_request(request.get("response_format") is not None)
 
         async for item in self._generate_and_stream(
             request_id,

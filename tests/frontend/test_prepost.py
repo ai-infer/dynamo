@@ -18,13 +18,13 @@ if HAS_VLLM:
         ChatCompletionRequest,
         ChatCompletionToolsParam,
     )
-    from vllm.entrypoints.openai.engine.protocol import FunctionDefinition
+    from vllm.entrypoints.openai.engine.protocol import DeltaMessage, FunctionDefinition
     from vllm.outputs import CompletionOutput
     from vllm.reasoning.qwen3_reasoning_parser import Qwen3ReasoningParser
     from vllm.sampling_params import SamplingParams
     from vllm.tool_parsers.hermes_tool_parser import Hermes2ProToolParser
 
-    from dynamo.frontend.prepost import StreamingPostProcessor
+    from dynamo.frontend.prepost import StreamingPostProcessor, _prepare_request
 else:
     # Fake some types so that `pre-commit` passes
     class CompletionOutput:
@@ -98,6 +98,25 @@ class MockQwen3Tokenizer:
 
     def decode(self, token_ids):
         return "".join(self._id_to_token.get(tid, f"<unk:{tid}>") for tid in token_ids)
+
+
+class _ReasoningOnlyParser:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def extract_reasoning_streaming(
+        self,
+        _previous_text,
+        _current_text,
+        delta_text,
+        _previous_token_ids,
+        _current_token_ids,
+        _delta_token_ids,
+    ):
+        return DeltaMessage(reasoning=delta_text, content=None)
+
+    def is_reasoning_end_streaming(self, *_args, **_kwargs):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1886,3 +1905,156 @@ def test_no_tool_call(tokenizer, request_for_sampling, sampling_params):
     # -- finish reason ------------------------------------------------------
     finish_reasons = [r["finish_reason"] for r in results if r.get("finish_reason")]
     assert "stop" in finish_reasons
+
+
+@pytest.mark.vllm
+def test_prepare_request_preserves_chat_template_kwargs_for_structured_output(
+    tokenizer,
+):
+    request = {
+        "model": "Qwen/Qwen3-0.6B",
+        "messages": [{"role": "user", "content": "Return JSON only"}],
+        "response_format": {"type": "json_object"},
+        "chat_template_kwargs": {"thinking": True},
+    }
+
+    request_for_sampling, _, chat_template_kwargs, _, _ = _prepare_request(
+        request,
+        tokenizer=tokenizer,
+        tool_parser_class=None,
+    )
+
+    assert request_for_sampling.response_format == {"type": "json_object"}
+    assert chat_template_kwargs["thinking"] is True
+    assert "enable_thinking" not in chat_template_kwargs
+
+
+@pytest.mark.vllm
+def test_structured_output_promotes_reasoning_to_content(
+    tokenizer, request_for_sampling, sampling_params
+):
+    request_for_sampling.response_format = {"type": "json_object"}
+    proc = StreamingPostProcessor(
+        tokenizer=tokenizer,
+        request_for_sampling=request_for_sampling,
+        sampling_params=sampling_params,
+        prompt_token_ids=PROMPT_TOKEN_IDS,
+        tool_parser=None,
+        reasoning_parser_class=_ReasoningOnlyParser,
+        chat_template_kwargs={"reasoning_effort": None},
+    )
+
+    result = proc.process_output(
+        CompletionOutput(
+            index=0,
+            text='{"name":"alice"}[EOS]',
+            token_ids=[],
+            routed_experts=None,
+            cumulative_logprob=None,
+            logprobs=None,
+            finish_reason="stop",
+            stop_reason=None,
+        )
+    )
+
+    assert result is not None
+    assert result["delta"]["content"] == '{"name":"alice"}'
+    assert "reasoning_content" not in result["delta"]
+
+
+@pytest.mark.vllm
+def test_structured_output_promotes_complete_reasoning_json_before_finish(
+    tokenizer, request_for_sampling, sampling_params
+):
+    request_for_sampling.response_format = {"type": "json_object"}
+    proc = StreamingPostProcessor(
+        tokenizer=tokenizer,
+        request_for_sampling=request_for_sampling,
+        sampling_params=sampling_params,
+        prompt_token_ids=PROMPT_TOKEN_IDS,
+        tool_parser=None,
+        reasoning_parser_class=_ReasoningOnlyParser,
+        chat_template_kwargs={"reasoning_effort": None},
+    )
+
+    result = proc.process_output(
+        CompletionOutput(
+            index=0,
+            text='{"name":"alice"}',
+            token_ids=[],
+            routed_experts=None,
+            cumulative_logprob=None,
+            logprobs=None,
+            finish_reason=None,
+            stop_reason=None,
+        )
+    )
+
+    assert result is not None
+    assert result["delta"]["content"] == '{"name":"alice"}'
+    assert "reasoning_content" not in result["delta"]
+
+
+@pytest.mark.vllm
+def test_structured_output_does_not_promote_partial_reasoning_chunk(
+    tokenizer, request_for_sampling, sampling_params
+):
+    request_for_sampling.response_format = {"type": "json_object"}
+    proc = StreamingPostProcessor(
+        tokenizer=tokenizer,
+        request_for_sampling=request_for_sampling,
+        sampling_params=sampling_params,
+        prompt_token_ids=PROMPT_TOKEN_IDS,
+        tool_parser=None,
+        reasoning_parser_class=_ReasoningOnlyParser,
+        chat_template_kwargs={"reasoning_effort": None},
+    )
+
+    result = proc.process_output(
+        CompletionOutput(
+            index=0,
+            text='{"partial":',
+            token_ids=[],
+            routed_experts=None,
+            cumulative_logprob=None,
+            logprobs=None,
+            finish_reason=None,
+            stop_reason=None,
+        )
+    )
+
+    assert result is not None
+    assert "content" not in result["delta"]
+    assert result["delta"]["reasoning_content"] == '{"partial":'
+
+
+@pytest.mark.vllm
+def test_structured_output_preserves_valid_json_string_suffix(
+    tokenizer, request_for_sampling, sampling_params
+):
+    request_for_sampling.response_format = {"type": "json_object"}
+    proc = StreamingPostProcessor(
+        tokenizer=tokenizer,
+        request_for_sampling=request_for_sampling,
+        sampling_params=sampling_params,
+        prompt_token_ids=PROMPT_TOKEN_IDS,
+        tool_parser=None,
+        reasoning_parser_class=None,
+        chat_template_kwargs={"reasoning_effort": None},
+    )
+
+    result = proc.process_output(
+        CompletionOutput(
+            index=0,
+            text='{"value":"tag[EOS]"}',
+            token_ids=[],
+            routed_experts=None,
+            cumulative_logprob=None,
+            logprobs=None,
+            finish_reason="stop",
+            stop_reason=None,
+        )
+    )
+
+    assert result is not None
+    assert result["delta"]["content"] == '{"value":"tag[EOS]"}'
