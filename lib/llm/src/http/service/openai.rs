@@ -1095,6 +1095,29 @@ fn accumulate_reasoning_dispatch(
     events
 }
 
+/// Backward-compatibility shim for clients sending top-level `enable_thinking`.
+///
+/// If `enable_thinking` is a boolean, map it to `chat_template_args.thinking`
+/// and remove the unsupported top-level field so generic validation succeeds.
+/// Non-boolean values are left untouched and will continue to be rejected.
+fn normalize_enable_thinking_to_chat_template_args(request: &mut NvCreateChatCompletionRequest) {
+    let Some(enable_thinking) = request.unsupported_fields.remove("enable_thinking") else {
+        return;
+    };
+
+    if let serde_json::Value::Bool(value) = enable_thinking {
+        request
+            .chat_template_args
+            .get_or_insert_with(HashMap::new)
+            .insert("thinking".to_string(), serde_json::Value::Bool(value));
+        return;
+    }
+
+    request
+        .unsupported_fields
+        .insert("enable_thinking".to_string(), enable_thinking);
+}
+
 /// OpenAI Chat Completions Request Handler
 ///
 /// This method will handle the incoming request for the /v1/chat/completions endpoint. The endpoint is a "source"
@@ -1130,6 +1153,8 @@ async fn chat_completions(
             request.inner.max_completion_tokens = Some(template.max_completion_tokens);
         }
     }
+
+    normalize_enable_thinking_to_chat_template_args(&mut request.inner);
 
     // Capture the resolved model after template application for metrics and engine lookup
     // todo - make the protocols be optional for model name
@@ -3033,6 +3058,66 @@ mod tests {
             assert!(msg.contains("documents"));
             assert!(msg.contains("chat_template"));
         }
+    }
+
+    #[test]
+    fn test_chat_completions_enable_thinking_maps_to_chat_template_args() {
+        let json = r#"{
+            "messages": [{"role": "user", "content": "Hello"}],
+            "model": "test-model",
+            "enable_thinking": true
+        }"#;
+
+        let mut request: NvCreateChatCompletionRequest = serde_json::from_str(json).unwrap();
+        assert!(request.unsupported_fields.contains_key("enable_thinking"));
+        assert!(request.chat_template_args.is_none());
+
+        normalize_enable_thinking_to_chat_template_args(&mut request);
+
+        assert!(!request.unsupported_fields.contains_key("enable_thinking"));
+        assert_eq!(
+            request
+                .chat_template_args
+                .as_ref()
+                .and_then(|args| args.get("thinking"))
+                .cloned(),
+            Some(serde_json::Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn test_chat_completions_enable_thinking_overwrites_existing_thinking_arg() {
+        let json = r#"{
+            "messages": [{"role": "user", "content": "Hello"}],
+            "model": "test-model",
+            "enable_thinking": true,
+            "chat_template_args": {
+                "thinking": false,
+                "foo": "bar"
+            }
+        }"#;
+
+        let mut request: NvCreateChatCompletionRequest = serde_json::from_str(json).unwrap();
+        normalize_enable_thinking_to_chat_template_args(&mut request);
+
+        let args = request.chat_template_args.as_ref().unwrap();
+        assert_eq!(args.get("foo"), Some(&serde_json::Value::String("bar".into())));
+        assert_eq!(args.get("thinking"), Some(&serde_json::Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_chat_completions_enable_thinking_non_bool_stays_unsupported() {
+        let json = r#"{
+            "messages": [{"role": "user", "content": "Hello"}],
+            "model": "test-model",
+            "enable_thinking": "true"
+        }"#;
+
+        let mut request: NvCreateChatCompletionRequest = serde_json::from_str(json).unwrap();
+        normalize_enable_thinking_to_chat_template_args(&mut request);
+
+        assert!(request.unsupported_fields.contains_key("enable_thinking"));
+        assert!(request.chat_template_args.is_none());
     }
 
     #[test]
