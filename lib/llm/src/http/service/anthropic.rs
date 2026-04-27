@@ -31,6 +31,7 @@ use super::{
     RouteDoc,
     disconnect::{ConnectionHandle, create_connection_monitor, monitor_for_disconnects},
     metrics::{CancellationLabels, Endpoint, process_response_and_observe_metrics},
+    thinking::{merge_default_thinking_args_if_absent, merge_thinking_args},
     service_v2,
 };
 use crate::protocols::anthropic::stream_converter::AnthropicStreamConverter;
@@ -217,10 +218,6 @@ async fn anthropic_messages(
         .thinking
         .as_ref()
         .is_some_and(|t| t.thinking_type == "disabled");
-    // Only some parser/template combos support explicit per-request thinking mode toggles.
-    let supports_thinking_toggle = reasoning_parser_supports_thinking_toggle(
-        parsing_options.reasoning_parser.as_deref(),
-    );
 
     // Convert Anthropic request -> UnifiedRequest -> Chat Completion request
     let unified_request: UnifiedRequest = orig_request.try_into().map_err(|e: anyhow::Error| {
@@ -242,37 +239,27 @@ async fn anthropic_messages(
     let anthropic_ctx = unified_request.anthropic_context().cloned();
     let mut chat_request = unified_request.into_inner();
 
-    // If client explicitly requested thinking mode and this model/parser supports
-    // request-level toggles, forward a compatibility set of template args.
-    if supports_thinking_toggle && (thinking_enabled || thinking_explicitly_disabled) {
-        let args = chat_request
-            .chat_template_args
-            .get_or_insert_with(Default::default);
-        if thinking_enabled {
-            args.insert("thinking".to_string(), serde_json::Value::Bool(true));
-            args.insert(
-                "thinking_mode".to_string(),
-                serde_json::Value::String("thinking".to_string()),
-            );
-            args.insert("enable_thinking".to_string(), serde_json::Value::Bool(true));
-        } else {
-            args.insert("thinking".to_string(), serde_json::Value::Bool(false));
-            args.insert(
-                "thinking_mode".to_string(),
-                serde_json::Value::String("chat".to_string()),
-            );
-            args.insert("enable_thinking".to_string(), serde_json::Value::Bool(false));
-        }
+    // If the client explicitly toggled thinking and the target model has a
+    // known switching parameter, translate it to model-aware chat template
+    // arguments before the request reaches prompt rendering. Unknown models
+    // are left unchanged so their output stays model-native.
+    if thinking_enabled || thinking_explicitly_disabled {
+        merge_thinking_args(
+            &mut chat_request.chat_template_args,
+            &chat_request.inner.model,
+            parsing_options.reasoning_parser.as_deref(),
+            thinking_enabled,
+        );
     }
 
     // When a reasoning parser is configured and the client hasn't explicitly
     // disabled thinking, assume the model's chat template will inject `<think>`.
     //
     // Two things must be aligned:
-    //   1. chat_template_args must include enable_thinking=true so the backend's
-    //      template actually injects `<think>` into the prompt. For the
+    //   1. chat_template_args must include model-appropriate thinking-enable keys
+    //      so the backend's template actually injects `<think>` into the prompt. For the
     //      ModelInput::Text path (SGLang without --skip-tokenizer-init), the
-    //      backend applies the template — without explicit enable_thinking the
+    //      backend applies the template — without explicit thinking flags the
     //      result depends on the template's default which varies by model.
     //   2. prompt_injected_reasoning must be true so the parser starts in
     //      reasoning mode with stripped_think_start=true, which is critical for
@@ -285,12 +272,16 @@ async fn anthropic_messages(
     let prompt_injected_reasoning =
         parsing_options.reasoning_parser.is_some() && !thinking_explicitly_disabled;
 
-    if prompt_injected_reasoning {
+    if prompt_injected_reasoning
+        && merge_default_thinking_args_if_absent(
+            &mut chat_request.chat_template_args,
+            &chat_request.inner.model,
+            parsing_options.reasoning_parser.as_deref(),
+        )
+    {
         let args = chat_request
             .chat_template_args
             .get_or_insert_with(Default::default);
-        args.entry("enable_thinking".to_string())
-            .or_insert(serde_json::Value::Bool(true));
         // Preserve reasoning from prior turns. Some templates (Nemotron)
         // strip historical <think> content by default to save context.
         // For agentic flows the model needs to see why it made prior decisions.
@@ -531,11 +522,4 @@ fn anthropic_error(status: StatusCode, error_type: &str, message: &str) -> Respo
         }),
     )
         .into_response()
-}
-
-fn reasoning_parser_supports_thinking_toggle(reasoning_parser: Option<&str>) -> bool {
-    matches!(
-        reasoning_parser,
-        Some("deepseek_r1" | "kimi_k25" | "nemotron_nano" | "nemotron3")
-    )
 }

@@ -121,21 +121,9 @@ impl TryFrom<AnthropicCreateMessageRequest> for NvCreateChatCompletionRequest {
             },
             nvext: None,
             // chat_template_args may be augmented by the Anthropic handler
-            // (anthropic.rs) after conversion — e.g., setting enable_thinking=true
-            // when a reasoning parser is configured. The conversion layer only
-            // forwards the client's explicit thinking preference here; the handler
-            // has access to parsing_options and makes the final decision.
-            chat_template_args: if req
-                .thinking
-                .as_ref()
-                .is_some_and(|t| t.thinking_type == "enabled")
-            {
-                let mut args = std::collections::HashMap::new();
-                args.insert("enable_thinking".to_string(), serde_json::Value::Bool(true));
-                Some(args)
-            } else {
-                None
-            },
+            // (anthropic.rs) after conversion. The handler has access to
+            // parsing_options and applies model-aware thinking parameters.
+            chat_template_args: None,
             media_io_kwargs: None,
             unsupported_fields: Default::default(),
         })
@@ -438,14 +426,8 @@ fn convert_anthropic_tool_choice(tc: &AnthropicToolChoice) -> ChatCompletionTool
 pub fn chat_completion_to_anthropic_response(
     chat_resp: NvCreateChatCompletionResponse,
     model: &str,
-    api_context: Option<&crate::protocols::unified::AnthropicContext>,
+    _api_context: Option<&crate::protocols::unified::AnthropicContext>,
 ) -> AnthropicMessageResponse {
-    let emit_thinking = !matches!(
-        api_context
-            .and_then(|ctx| ctx.thinking.as_ref())
-            .map(|t| t.thinking_type.as_str()),
-        Some("disabled")
-    );
     let msg_id = format!("msg_{}", Uuid::new_v4().simple());
 
     let choice = chat_resp.inner.choices.into_iter().next();
@@ -479,9 +461,7 @@ pub fn chat_completion_to_anthropic_response(
         // The backend strips <think>...</think> from the text and surfaces it
         // as reasoning_content on the message. Map this to a Thinking block
         // so clients see proper extended thinking in the Anthropic response.
-        if emit_thinking
-            && let Some(thinking) = choice.message.reasoning_content.filter(|t| !t.is_empty())
-        {
+        if let Some(thinking) = choice.message.reasoning_content.filter(|t| !t.is_empty()) {
             content.insert(
                 0,
                 AnthropicResponseContentBlock::Thinking {
@@ -845,7 +825,7 @@ mod tests {
 
     #[allow(deprecated)]
     #[test]
-    fn test_chat_completion_to_anthropic_response_hides_thinking_when_disabled() {
+    fn test_chat_completion_to_anthropic_response_emits_thinking_when_disabled() {
         use crate::protocols::unified::AnthropicContext;
 
         let chat_resp = NvCreateChatCompletionResponse {
@@ -891,8 +871,68 @@ mod tests {
             response
                 .content
                 .iter()
-                .all(|b| !matches!(b, AnthropicResponseContentBlock::Thinking { .. })),
-            "thinking block should be suppressed when thinking is disabled"
+                .any(|b| matches!(b, AnthropicResponseContentBlock::Thinking { .. })),
+            "thinking block should follow the model response even when thinking is disabled"
+        );
+        assert!(
+            response
+                .content
+                .iter()
+                .any(|b| matches!(b, AnthropicResponseContentBlock::Text { .. })),
+            "final text result should remain"
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn test_chat_completion_to_anthropic_response_emits_thinking_when_enabled() {
+        use crate::protocols::unified::AnthropicContext;
+
+        let chat_resp = NvCreateChatCompletionResponse {
+            inner: dynamo_protocols::types::CreateChatCompletionResponse {
+                id: "chatcmpl-xyz".into(),
+                choices: vec![dynamo_protocols::types::ChatChoice {
+                    index: 0,
+                    message: dynamo_protocols::types::ChatCompletionResponseMessage {
+                        content: Some(dynamo_protocols::types::ChatCompletionMessageContent::Text(
+                            "Final answer".to_string(),
+                        )),
+                        refusal: None,
+                        tool_calls: None,
+                        role: dynamo_protocols::types::Role::Assistant,
+                        function_call: None,
+                        audio: None,
+                        reasoning_content: Some("Hidden chain of thought".to_string()),
+                    },
+                    finish_reason: Some(dynamo_protocols::types::FinishReason::Stop),
+                    stop_reason: None,
+                    logprobs: None,
+                }],
+                created: 1726000000,
+                model: "test-model".into(),
+                service_tier: None,
+                system_fingerprint: None,
+                object: "chat.completion".to_string(),
+                usage: None,
+            },
+            nvext: None,
+        };
+
+        let ctx = AnthropicContext {
+            thinking: Some(ThinkingConfig {
+                thinking_type: "enabled".to_string(),
+                budget_tokens: Some(1024),
+            }),
+            ..Default::default()
+        };
+        let response = chat_completion_to_anthropic_response(chat_resp, "test-model", Some(&ctx));
+
+        assert!(
+            response
+                .content
+                .iter()
+                .any(|b| matches!(b, AnthropicResponseContentBlock::Thinking { .. })),
+            "thinking block should be emitted when thinking is enabled"
         );
         assert!(
             response

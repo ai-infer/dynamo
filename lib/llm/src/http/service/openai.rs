@@ -40,6 +40,7 @@ use super::{
         process_response_and_observe_metrics,
         process_response_using_event_converter_and_observe_metrics,
     },
+    thinking::merge_thinking_args,
     service_v2,
 };
 use crate::engines::ValidateRequest;
@@ -1095,27 +1096,25 @@ fn accumulate_reasoning_dispatch(
     events
 }
 
-/// Backward-compatibility shim for clients sending top-level `enable_thinking`.
+/// Extracts a top-level `enable_thinking` boolean from unsupported fields.
 ///
-/// If `enable_thinking` is a boolean, map it to `chat_template_args.thinking`
-/// and remove the unsupported top-level field so generic validation succeeds.
-/// Non-boolean values are left untouched and will continue to be rejected.
-fn normalize_enable_thinking_to_chat_template_args(request: &mut NvCreateChatCompletionRequest) {
+/// For backward compatibility we accept a boolean top-level field, remove it so
+/// unsupported-field validation can pass, and defer model-aware mapping until
+/// parser/model information is available.
+/// Non-boolean values are restored and remain validation errors.
+fn extract_enable_thinking_toggle(request: &mut NvCreateChatCompletionRequest) -> Option<bool> {
     let Some(enable_thinking) = request.unsupported_fields.remove("enable_thinking") else {
-        return;
+        return None;
     };
 
     if let serde_json::Value::Bool(value) = enable_thinking {
-        request
-            .chat_template_args
-            .get_or_insert_with(HashMap::new)
-            .insert("thinking".to_string(), serde_json::Value::Bool(value));
-        return;
+        return Some(value);
     }
 
     request
         .unsupported_fields
         .insert("enable_thinking".to_string(), enable_thinking);
+    None
 }
 
 /// OpenAI Chat Completions Request Handler
@@ -1154,7 +1153,7 @@ async fn chat_completions(
         }
     }
 
-    normalize_enable_thinking_to_chat_template_args(&mut request.inner);
+    let enable_thinking_toggle = extract_enable_thinking_toggle(&mut request);
 
     // Capture the resolved model after template application for metrics and engine lookup
     // todo - make the protocols be optional for model name
@@ -1212,6 +1211,15 @@ async fn chat_completions(
             inflight_guard.mark_error(extract_error_type_from_response(&err_response));
             err_response
         })?;
+
+    if let Some(enable_thinking) = enable_thinking_toggle {
+        merge_thinking_args(
+            &mut request.chat_template_args,
+            &model,
+            parsing_options.reasoning_parser.as_deref(),
+            enable_thinking,
+        );
+    }
 
     let mut response_collector = state.metrics_clone().create_response_collector(&model);
 
@@ -3061,7 +3069,7 @@ mod tests {
     }
 
     #[test]
-    fn test_chat_completions_enable_thinking_maps_to_chat_template_args() {
+    fn test_chat_completions_enable_thinking_bool_is_extracted() {
         let json = r#"{
             "messages": [{"role": "user", "content": "Hello"}],
             "model": "test-model",
@@ -3072,24 +3080,18 @@ mod tests {
         assert!(request.unsupported_fields.contains_key("enable_thinking"));
         assert!(request.chat_template_args.is_none());
 
-        normalize_enable_thinking_to_chat_template_args(&mut request);
+        let toggle = extract_enable_thinking_toggle(&mut request);
 
+        assert_eq!(toggle, Some(true));
         assert!(!request.unsupported_fields.contains_key("enable_thinking"));
-        assert_eq!(
-            request
-                .chat_template_args
-                .as_ref()
-                .and_then(|args| args.get("thinking"))
-                .cloned(),
-            Some(serde_json::Value::Bool(true))
-        );
+        assert!(request.chat_template_args.is_none());
     }
 
     #[test]
-    fn test_chat_completions_enable_thinking_overwrites_existing_thinking_arg() {
+    fn test_chat_completions_enable_thinking_mapped_by_parser_overwrites_existing_arg() {
         let json = r#"{
             "messages": [{"role": "user", "content": "Hello"}],
-            "model": "test-model",
+            "model": "deepseek-ai/DeepSeek-R1-0528",
             "enable_thinking": true,
             "chat_template_args": {
                 "thinking": false,
@@ -3098,11 +3100,18 @@ mod tests {
         }"#;
 
         let mut request: NvCreateChatCompletionRequest = serde_json::from_str(json).unwrap();
-        normalize_enable_thinking_to_chat_template_args(&mut request);
+        let toggle = extract_enable_thinking_toggle(&mut request).unwrap();
+        merge_thinking_args(
+            &mut request.chat_template_args,
+            "deepseek-ai/DeepSeek-R1-0528",
+            Some("deepseek_r1"),
+            toggle,
+        );
 
         let args = request.chat_template_args.as_ref().unwrap();
         assert_eq!(args.get("foo"), Some(&serde_json::Value::String("bar".into())));
         assert_eq!(args.get("thinking"), Some(&serde_json::Value::Bool(true)));
+        assert!(!args.contains_key("thinking_mode"));
     }
 
     #[test]
@@ -3114,8 +3123,9 @@ mod tests {
         }"#;
 
         let mut request: NvCreateChatCompletionRequest = serde_json::from_str(json).unwrap();
-        normalize_enable_thinking_to_chat_template_args(&mut request);
+        let toggle = extract_enable_thinking_toggle(&mut request);
 
+        assert_eq!(toggle, None);
         assert!(request.unsupported_fields.contains_key("enable_thinking"));
         assert!(request.chat_template_args.is_none());
     }
