@@ -20,6 +20,7 @@
 
 mod anthropic;
 mod openai;
+mod thinking;
 
 pub mod busy_threshold;
 pub mod disconnect;

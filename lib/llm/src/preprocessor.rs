@@ -744,11 +744,11 @@ impl OpenAIPreprocessor {
         S: Stream<Item = Annotated<NvCreateChatCompletionStreamResponse>> + Send + 'static,
     {
         // Try to parse reasoning content only if parser is configured
-        let should_parse_reasoning = self.runtime_config.reasoning_parser.is_some()
-            && !Self::is_reasoning_disabled_by_request(
-                self.runtime_config.reasoning_parser.as_deref(),
-                request.chat_template_args.as_ref(),
-            );
+        let should_parse_reasoning = Self::should_parse_reasoning_for_request(
+            self.runtime_config.reasoning_parser.as_deref(),
+            request.chat_template_args.as_ref(),
+            request.inner.response_format.is_some(),
+        );
 
         // Reasoning Content Parsing Transformation Step
         // Current Solution:
@@ -1189,6 +1189,23 @@ impl OpenAIPreprocessor {
 
         let jail = builder.build();
         jail.apply_with_finish_reason(stream)
+    }
+
+    /// Check if reasoning parsing should run for a given request.
+    /// For kimi_k25/deepseek/nemotron-style models we honor request-level flags that
+    /// switch the template into chat mode, and structured output always disables
+    /// reasoning parsing so assistant JSON stays in `message.content`.
+    fn should_parse_reasoning_for_request(
+        reasoning_parser: Option<&str>,
+        chat_template_args: Option<&std::collections::HashMap<String, serde_json::Value>>,
+        has_response_format: bool,
+    ) -> bool {
+        if has_response_format {
+            return false;
+        }
+
+        reasoning_parser.is_some()
+            && !Self::is_reasoning_disabled_by_request(reasoning_parser, chat_template_args)
     }
 
     /// Check if reasoning parsing should be disabled based on per-request parameters.
@@ -1648,6 +1665,65 @@ mod strip_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_should_parse_reasoning_for_request() {
+        let thinking_false = {
+            let mut m = std::collections::HashMap::new();
+            m.insert("thinking".to_string(), serde_json::Value::Bool(false));
+            m
+        };
+
+        let cases = [
+            (
+                Some("kimi_k25"),
+                None,
+                false,
+                true,
+                "kimi_k25 without response_format still parses reasoning",
+            ),
+            (
+                Some("kimi_k25"),
+                None,
+                true,
+                false,
+                "structured output disables reasoning parsing",
+            ),
+            (
+                Some("kimi_k25"),
+                Some(&thinking_false),
+                false,
+                false,
+                "thinking=false disables reasoning parsing",
+            ),
+            (
+                Some("basic"),
+                None,
+                false,
+                true,
+                "basic parser without structured output still parses",
+            ),
+            (
+                None,
+                None,
+                false,
+                false,
+                "missing parser never parses reasoning",
+            ),
+        ];
+
+        for (parser, args, has_response_format, expected, desc) in cases {
+            assert_eq!(
+                OpenAIPreprocessor::should_parse_reasoning_for_request(
+                    parser,
+                    args,
+                    has_response_format,
+                ),
+                expected,
+                "FAILED: {desc}",
+            );
+        }
+    }
 
     #[test]
     fn test_is_reasoning_disabled_by_request() {
