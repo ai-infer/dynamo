@@ -543,7 +543,13 @@ impl super::OAIPromptFormatter for DeepSeekV32Formatter {
     }
 
     fn render(&self, req: &dyn super::OAIChatLikeRequest) -> Result<String> {
-        let thinking_mode = self.resolve_thinking_mode(req.chat_template_args());
+        // Structured outputs must be returned in assistant content, so force chat
+        // mode even if the model's default template would start a <think> block.
+        let thinking_mode = if req.response_format().is_some() {
+            ThinkingMode::Chat
+        } else {
+            self.resolve_thinking_mode(req.chat_template_args())
+        };
 
         // Get messages from request
         let messages_value = req.messages();
@@ -1348,6 +1354,44 @@ mod tests {
                 tokens::THINKING_END
             )),
             "Boolean 'thinking' key should take precedence over 'thinking_mode' string",
+        );
+    }
+
+    #[test]
+    fn test_response_format_forces_chat_mode() {
+        use super::super::OAIPromptFormatter;
+
+        let args = std::collections::HashMap::from([
+            ("thinking".to_string(), json!(true)),
+            ("thinking_mode".to_string(), json!("thinking")),
+        ]);
+
+        let request = MockRequest::new(json!([
+            {"role": "system", "content": "You are a JSON-only assistant."},
+            {"role": "user", "content": "Return a JSON object."}
+        ]))
+        .with_response_format(json!({"type": "json_object"}))
+        .with_chat_template_args(args);
+
+        let formatter = DeepSeekV32Formatter::new_thinking();
+        let result = formatter.render(&request).unwrap();
+
+        assert!(
+            result.ends_with(&format!(
+                "{}{}",
+                tokens::ASSISTANT_START,
+                tokens::THINKING_END
+            )),
+            "Structured output should force chat mode, got: ...{}",
+            &result[result.len().saturating_sub(80)..]
+        );
+        assert!(
+            !result.ends_with(&format!(
+                "{}{}",
+                tokens::ASSISTANT_START,
+                tokens::THINKING_START
+            )),
+            "Structured output must not leave the prompt in thinking mode"
         );
     }
 }

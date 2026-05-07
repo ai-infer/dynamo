@@ -478,6 +478,21 @@ impl OAIPromptFormatter for HfTokenizerConfigJsonFormatter {
             ctx
         };
 
+        // Structured outputs must land in assistant content, not in hidden
+        // reasoning blocks. Provide common "chat mode" flags used by popular
+        // templates (Kimi/DeepSeek/Qwen/Nemotron) and let the template ignore
+        // any keys it doesn't understand.
+        let ctx = if req.response_format().is_some() {
+            let structured_overrides = Value::from_serialize(serde_json::json!({
+                "thinking": false,
+                "thinking_mode": "chat",
+                "enable_thinking": false
+            }));
+            context! { ..ctx, ..structured_overrides }
+        } else {
+            ctx
+        };
+
         let tmpl: minijinja::Template<'_, '_> = if has_tools {
             self.env.get_template("tool_use")?
         } else {
@@ -1725,6 +1740,43 @@ NORMAL_MODE
             think_count, 1,
             "must have exactly one <think> block (from template), got {} in: {}",
             think_count, rendered
+        );
+    }
+
+    #[test]
+    fn test_structured_output_forces_chat_mode_template_args() {
+        use super::tokcfg::ChatTemplate;
+        use super::{ContextMixins, HfTokenizerConfigJsonFormatter, OAIPromptFormatter};
+
+        let template =
+            r#"thinking={{ thinking }} thinking_mode={{ thinking_mode }} enable_thinking={{ enable_thinking }}"#;
+
+        let chat_template: ChatTemplate = serde_json::from_value(serde_json::json!({
+            "chat_template": template
+        }))
+        .unwrap();
+
+        let formatter =
+            HfTokenizerConfigJsonFormatter::new(chat_template, ContextMixins::new(&[])).unwrap();
+
+        let request: NvCreateChatCompletionRequest = serde_json::from_value(serde_json::json!({
+            "model": "test-model",
+            "messages": [
+                {"role": "user", "content": "Return a JSON object."}
+            ],
+            "response_format": {"type": "json_object"},
+            "chat_template_args": {
+                "thinking": true,
+                "thinking_mode": "thinking",
+                "enable_thinking": true
+            }
+        }))
+        .unwrap();
+
+        let rendered = formatter.render(&request).unwrap();
+        assert_eq!(
+            rendered,
+            "thinking=false thinking_mode=chat enable_thinking=false"
         );
     }
 }

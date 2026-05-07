@@ -1,0 +1,108 @@
+# syntax=docker/dockerfile:1.10.0
+# 指定要使用的镜像
+ARG VLLM_OFFICIAL_IMAGE="vllm/vllm-openai:cu130-nightly-18013df6ae27c3fb941307c46c975227126d641f"
+ARG DYNAMO_BASE_IMAGE="dynamo:latest-none"
+
+FROM ${DYNAMO_BASE_IMAGE} AS dynamo_base
+FROM ${VLLM_OFFICIAL_IMAGE} AS runtime
+
+WORKDIR /workspace
+
+ENV DYNAMO_HOME=/opt/dynamo \
+    NIXL_PREFIX=/opt/nvidia/nvda_nixl \
+    NIXL_LIB_DIR=/opt/nvidia/nvda_nixl/lib64 \
+    NIXL_PLUGIN_DIR=/opt/nvidia/nvda_nixl/lib64/plugins
+
+ENV PATH="/usr/local/bin/etcd:/usr/local/ucx/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/vllm/ep_kernels_workspace/nvshmem_install/lib:${NIXL_LIB_DIR}:${NIXL_PLUGIN_DIR}:/usr/local/ucx/lib:/usr/local/ucx/lib/ucx:${LD_LIBRARY_PATH}"
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        jq \
+        git \
+        git-lfs \
+        curl \
+        ca-certificates \
+        protobuf-compiler \
+        libibverbs1 \
+        rdma-core \
+        ibverbs-utils \
+        libibumad3 \
+        libnuma1 \
+        librdmacm1 \
+        ibverbs-providers && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=dynamo_base /usr/bin/nats-server /usr/bin/nats-server
+COPY --from=dynamo_base /usr/local/bin/etcd/ /usr/local/bin/etcd/
+COPY --from=dynamo_base /usr/local/ucx /usr/local/ucx
+COPY --from=dynamo_base ${NIXL_PREFIX} ${NIXL_PREFIX}
+COPY --from=dynamo_base /opt/dynamo/wheelhouse/ /opt/dynamo/wheelhouse/
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# 修正官方 vLLM 镜像里的 editable 安装路径
+RUN SITE_DIR=$(python3 -c "import site; print(site.getsitepackages()[0])") && \
+    if [ -f "${SITE_DIR}/__editable__.pplx_kernels-0.0.1.pth" ]; then \
+        echo "/opt/vllm/ep_kernels_workspace/pplx-kernels/src" > "${SITE_DIR}/__editable__.pplx_kernels-0.0.1.pth"; \
+    fi && \
+    find "${SITE_DIR}" \
+        \( -name "__editable__.deep_ep*.pth" -o \
+           -name "__editable___deep_ep*_finder.py" -o \
+           -name "__editable___vllm*_finder.py" \) \
+        -exec sed -i "s|/vllm-workspace|/opt/vllm|g" {} \; && \
+    python3 -c "import vllm; print(vllm.__file__)"
+
+# 锁住官方镜像已有的大栈，避免 Dynamo 依赖把 vLLM runtime 栈冲掉
+RUN python3 - <<'PY' > /tmp/base-vllm-stack-constraints.txt
+import importlib.metadata as m
+for name in ("torch", "torchaudio", "torchvision", "vllm"):
+    try:
+        print(f"{name}=={m.version(name)}")
+    except m.PackageNotFoundError:
+        pass
+PY
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system pip setuptools wheel
+
+# 先装 Dynamo 自己的 wheel，不动 vLLM 依赖解析
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --no-deps \
+        /opt/dynamo/wheelhouse/ai_dynamo_runtime*.whl \
+        /opt/dynamo/wheelhouse/ai_dynamo*any.whl \
+        /opt/dynamo/wheelhouse/nixl/nixl*.whl && \
+    if ls /opt/dynamo/wheelhouse/kvbm*.whl >/dev/null 2>&1; then \
+        uv pip install --system --no-deps /opt/dynamo/wheelhouse/kvbm*.whl; \
+    fi && \
+    if ls /opt/dynamo/wheelhouse/gpu_memory_service*.whl >/dev/null 2>&1; then \
+        uv pip install --system --no-deps /opt/dynamo/wheelhouse/gpu_memory_service*.whl; \
+    fi
+
+COPY container/deps/requirements.common.txt /tmp/requirements.common.txt
+COPY container/deps/requirements.vllm.txt /tmp/requirements.vllm.txt
+COPY container/deps/requirements.planner.txt /tmp/requirements.planner.txt
+COPY container/deps/requirements.benchmark.txt /tmp/requirements.benchmark.txt
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    export UV_GIT_LFS=1 UV_HTTP_TIMEOUT=300 UV_HTTP_RETRIES=5 && \
+    uv pip install --system \
+        --constraint /tmp/base-vllm-stack-constraints.txt \
+        --requirement /tmp/requirements.common.txt \
+        --requirement /tmp/requirements.vllm.txt \
+        --requirement /tmp/requirements.planner.txt \
+        --requirement /tmp/requirements.benchmark.txt && \
+    rm -f /tmp/requirements.*.txt && \
+    rm -rf /opt/dynamo/wheelhouse
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --upgrade transformers
+
+RUN python3 - <<'PY'
+import torch, vllm
+print("torch", torch.__version__, torch.__file__)
+print("vllm", vllm.__version__, vllm.__file__)
+PY
+
+COPY . /workspace/
+

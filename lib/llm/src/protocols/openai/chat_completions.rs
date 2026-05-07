@@ -325,6 +325,7 @@ impl OpenAIOutputOptionsProvider for NvCreateChatCompletionRequest {
 
     fn get_skip_special_tokens(&self) -> Option<bool> {
         CommonExtProvider::get_skip_special_tokens(self)
+            .or_else(|| self.inner.response_format.as_ref().map(|_| true))
     }
 
     fn get_formatted_prompt(&self) -> Option<bool> {
@@ -425,5 +426,46 @@ mod tests {
 
             assert_eq!(output_options.skip_special_tokens, Some(skip_value));
         }
+    }
+
+    #[test]
+    fn test_response_format_defaults_skip_special_tokens_to_true() {
+        let json_str = json!({
+            "model": "test-model",
+            "messages": [
+                {"role": "user", "content": "Return JSON"}
+            ],
+            "response_format": {"type": "json_object"}
+        });
+
+        let request: NvCreateChatCompletionRequest =
+            serde_json::from_value(json_str).expect("Failed to deserialize request");
+
+        let output_options = request
+            .extract_output_options()
+            .expect("Failed to extract output options");
+
+        assert_eq!(output_options.skip_special_tokens, Some(true));
+    }
+
+    #[test]
+    fn test_explicit_skip_special_tokens_overrides_response_format_default() {
+        let json_str = json!({
+            "model": "test-model",
+            "messages": [
+                {"role": "user", "content": "Return JSON"}
+            ],
+            "response_format": {"type": "json_object"},
+            "skip_special_tokens": false
+        });
+
+        let request: NvCreateChatCompletionRequest =
+            serde_json::from_value(json_str).expect("Failed to deserialize request");
+
+        let output_options = request
+            .extract_output_options()
+            .expect("Failed to extract output options");
+
+        assert_eq!(output_options.skip_special_tokens, Some(false));
     }
 }
