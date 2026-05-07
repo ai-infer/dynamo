@@ -89,6 +89,10 @@ impl AnthropicStreamConverter {
         converter
     }
 
+    fn should_emit_thinking(&self) -> bool {
+        true
+    }
+
     /// Emit the initial `message_start` event.
     pub fn emit_start_events(&mut self) -> Vec<Result<Event, anyhow::Error>> {
         // TODO: When AnthropicMessageResponse gains a `service_tier` field,
@@ -151,7 +155,8 @@ impl AnthropicStreamConverter {
             }
 
             // Handle reasoning/thinking content deltas
-            if let Some(ref reasoning) = delta.reasoning_content
+            if self.should_emit_thinking()
+                && let Some(ref reasoning) = delta.reasoning_content
                 && !reasoning.is_empty()
             {
                 // Emit content_block_start on first thinking token
@@ -195,10 +200,7 @@ impl AnthropicStreamConverter {
                     // Emit signature delta to close the thinking block.
                     // The engine doesn't produce Anthropic-style cryptographic signatures,
                     // so we use "erased" (the standard placeholder per the Anthropic spec).
-                    // When `api_context` is available and the original request had
-                    // `thinking.thinking_type == "enabled"`, this is expected — the backend
-                    // simply doesn't generate real signatures. If/when the backend starts
-                    // returning real signatures, we can use the context to validate or
+                    // If/when the backend starts returning real signatures, we can
                     // pass them through instead of hardcoding "erased".
                     let sig_delta = AnthropicStreamEvent::ContentBlockDelta {
                         index: self.thinking_block_index,
@@ -491,7 +493,8 @@ impl AnthropicStreamConverter {
             }
 
             // Handle reasoning/thinking content deltas
-            if let Some(ref reasoning) = delta.reasoning_content
+            if self.should_emit_thinking()
+                && let Some(ref reasoning) = delta.reasoning_content
                 && !reasoning.is_empty()
             {
                 if !self.thinking_block_started {
@@ -953,6 +956,76 @@ mod tests {
             },
             nvext: None,
         }
+    }
+
+    #[test]
+    fn test_thinking_disabled_still_emits_model_reasoning_delta() {
+        use crate::protocols::anthropic::types::ThinkingConfig;
+        use crate::protocols::unified::AnthropicContext;
+
+        let mut conv = AnthropicStreamConverter::with_context(
+            "test-model".into(),
+            AnthropicContext {
+                thinking: Some(ThinkingConfig {
+                    thinking_type: "disabled".to_string(),
+                    budget_tokens: None,
+                }),
+                ..Default::default()
+            },
+        );
+
+        let reasoning_events = conv.process_chunk_tagged(&reasoning_chunk("Let me think..."));
+        assert_eq!(
+            event_types(&reasoning_events),
+            vec!["content_block_start", "content_block_delta"],
+            "disabled thinking should not filter model reasoning events"
+        );
+
+        let text_events = conv.process_chunk_tagged(&text_chunk("Final answer"));
+        assert_eq!(
+            event_types(&text_events),
+            vec![
+                "content_block_delta",
+                "content_block_stop",
+                "content_block_start",
+                "content_block_delta"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_thinking_enabled_emits_reasoning_delta() {
+        use crate::protocols::anthropic::types::ThinkingConfig;
+        use crate::protocols::unified::AnthropicContext;
+
+        let mut conv = AnthropicStreamConverter::with_context(
+            "test-model".into(),
+            AnthropicContext {
+                thinking: Some(ThinkingConfig {
+                    thinking_type: "enabled".to_string(),
+                    budget_tokens: None,
+                }),
+                ..Default::default()
+            },
+        );
+
+        let reasoning_events = conv.process_chunk_tagged(&reasoning_chunk("Let me think..."));
+        assert_eq!(
+            event_types(&reasoning_events),
+            vec!["content_block_start", "content_block_delta"],
+            "enabled thinking should emit thinking delta events"
+        );
+
+        let text_events = conv.process_chunk_tagged(&text_chunk("Final answer"));
+        assert_eq!(
+            event_types(&text_events),
+            vec![
+                "content_block_delta",
+                "content_block_stop",
+                "content_block_start",
+                "content_block_delta"
+            ]
+        );
     }
 
     /// Full reasoning flow: thinking → text → tool_use.

@@ -31,6 +31,7 @@ use super::{
     RouteDoc,
     disconnect::{ConnectionHandle, create_connection_monitor, monitor_for_disconnects},
     metrics::{CancellationLabels, Endpoint, process_response_and_observe_metrics},
+    thinking::{merge_default_thinking_args_if_absent, merge_thinking_args},
     service_v2,
 };
 use crate::protocols::anthropic::stream_converter::AnthropicStreamConverter;
@@ -208,6 +209,10 @@ async fn anthropic_messages(
     let (orig_request, context) = request.into_parts();
     let model_for_resp = orig_request.model.clone();
 
+    let thinking_enabled = orig_request
+        .thinking
+        .as_ref()
+        .is_some_and(|t| t.thinking_type == "enabled");
     // Check if the Anthropic request explicitly disabled thinking.
     let thinking_explicitly_disabled = orig_request
         .thinking
@@ -234,14 +239,27 @@ async fn anthropic_messages(
     let anthropic_ctx = unified_request.anthropic_context().cloned();
     let mut chat_request = unified_request.into_inner();
 
+    // If the client explicitly toggled thinking and the target model has a
+    // known switching parameter, translate it to model-aware chat template
+    // arguments before the request reaches prompt rendering. Unknown models
+    // are left unchanged so their output stays model-native.
+    if thinking_enabled || thinking_explicitly_disabled {
+        merge_thinking_args(
+            &mut chat_request.chat_template_args,
+            &chat_request.inner.model,
+            parsing_options.reasoning_parser.as_deref(),
+            thinking_enabled,
+        );
+    }
+
     // When a reasoning parser is configured and the client hasn't explicitly
     // disabled thinking, assume the model's chat template will inject `<think>`.
     //
     // Two things must be aligned:
-    //   1. chat_template_args must include enable_thinking=true so the backend's
-    //      template actually injects `<think>` into the prompt. For the
+    //   1. chat_template_args must include model-appropriate thinking-enable keys
+    //      so the backend's template actually injects `<think>` into the prompt. For the
     //      ModelInput::Text path (SGLang without --skip-tokenizer-init), the
-    //      backend applies the template — without explicit enable_thinking the
+    //      backend applies the template — without explicit thinking flags the
     //      result depends on the template's default which varies by model.
     //   2. prompt_injected_reasoning must be true so the parser starts in
     //      reasoning mode with stripped_think_start=true, which is critical for
@@ -254,12 +272,16 @@ async fn anthropic_messages(
     let prompt_injected_reasoning =
         parsing_options.reasoning_parser.is_some() && !thinking_explicitly_disabled;
 
-    if prompt_injected_reasoning {
+    if prompt_injected_reasoning
+        && merge_default_thinking_args_if_absent(
+            &mut chat_request.chat_template_args,
+            &chat_request.inner.model,
+            parsing_options.reasoning_parser.as_deref(),
+        )
+    {
         let args = chat_request
             .chat_template_args
             .get_or_insert_with(Default::default);
-        args.entry("enable_thinking".to_string())
-            .or_insert(serde_json::Value::Bool(true));
         // Preserve reasoning from prior turns. Some templates (Nemotron)
         // strip historical <think> content by default to save context.
         // For agentic flows the model needs to see why it made prior decisions.
