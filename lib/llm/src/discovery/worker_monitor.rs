@@ -386,12 +386,40 @@ impl KvWorkerMonitor {
             .active_decode_blocks_threshold
     }
 
+    fn collect_busy_instances(
+        worker_load_states: &DashMap<u64, WorkerLoadState>,
+        cfg: &LoadThresholdConfig,
+    ) -> Vec<u64> {
+        let mut busy_instances: Vec<u64> = worker_load_states
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .value()
+                    .is_busy(
+                        cfg.active_decode_blocks_threshold,
+                        cfg.active_prefill_tokens_threshold,
+                        cfg.active_prefill_tokens_threshold_frac,
+                    )
+                    .then_some(*entry.key())
+            })
+            .collect();
+        busy_instances.sort_unstable();
+        busy_instances
+    }
+
+    fn refresh_free_instances(&self) {
+        let cfg = self.thresholds.read().unwrap().clone();
+        let busy_instances = Self::collect_busy_instances(&self.worker_load_states, &cfg);
+        self.client.update_free_instances(&busy_instances);
+    }
+
     /// Set the active decode blocks threshold.
     pub fn set_active_decode_blocks_threshold(&self, threshold: f64) {
         self.thresholds
             .write()
             .unwrap()
             .active_decode_blocks_threshold = Some(threshold);
+        self.refresh_free_instances();
     }
 
     /// Get the current active prefill tokens threshold, if configured.
@@ -408,6 +436,7 @@ impl KvWorkerMonitor {
             .write()
             .unwrap()
             .active_prefill_tokens_threshold = Some(threshold);
+        self.refresh_free_instances();
     }
 
     /// Get the current active prefill tokens threshold frac, if configured.
@@ -424,6 +453,7 @@ impl KvWorkerMonitor {
             .write()
             .unwrap()
             .active_prefill_tokens_threshold_frac = Some(frac);
+        self.refresh_free_instances();
     }
 
     /// Get the current load threshold configuration. Unset fields are returned
@@ -436,16 +466,19 @@ impl KvWorkerMonitor {
     /// `Some` in the input overwrite their counterparts; `None` fields leave
     /// the existing value untouched.
     pub fn set_load_threshold_config(&self, config: &LoadThresholdConfig) {
-        let mut guard = self.thresholds.write().unwrap();
-        if let Some(v) = config.active_decode_blocks_threshold {
-            guard.active_decode_blocks_threshold = Some(v);
+        {
+            let mut guard = self.thresholds.write().unwrap();
+            if let Some(v) = config.active_decode_blocks_threshold {
+                guard.active_decode_blocks_threshold = Some(v);
+            }
+            if let Some(v) = config.active_prefill_tokens_threshold {
+                guard.active_prefill_tokens_threshold = Some(v);
+            }
+            if let Some(v) = config.active_prefill_tokens_threshold_frac {
+                guard.active_prefill_tokens_threshold_frac = Some(v);
+            }
         }
-        if let Some(v) = config.active_prefill_tokens_threshold {
-            guard.active_prefill_tokens_threshold = Some(v);
-        }
-        if let Some(v) = config.active_prefill_tokens_threshold_frac {
-            guard.active_prefill_tokens_threshold_frac = Some(v);
-        }
+        self.refresh_free_instances();
     }
 }
 
@@ -642,19 +675,8 @@ impl WorkerLoadMonitor for KvWorkerMonitor {
                         }
 
                         // Recalculate all busy instances and update
-                        let busy_instances: Vec<u64> = worker_load_states
-                            .iter()
-                            .filter_map(|entry| {
-                                entry
-                                    .value()
-                                    .is_busy(
-                                        cfg.active_decode_blocks_threshold,
-                                        cfg.active_prefill_tokens_threshold,
-                                        cfg.active_prefill_tokens_threshold_frac,
-                                    )
-                                    .then_some(*entry.key())
-                            })
-                            .collect();
+                        let busy_instances =
+                            KvWorkerMonitor::collect_busy_instances(&worker_load_states, &cfg);
 
                         // Only update if busy_instances has changed
                         if busy_instances != previous_busy_instances {
@@ -768,8 +790,9 @@ impl WorkerLoadMonitor for KvWorkerMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoadThresholdConfig, WorkerLoadState};
+    use super::{KvWorkerMonitor, LoadThresholdConfig, WorkerLoadState};
     use dynamo_kv_router::protocols::ActiveLoad;
+    use dynamo_runtime::{DistributedRuntime, Runtime, distributed::DistributedConfig};
 
     #[test]
     fn load_threshold_config_default_is_not_configured() {
@@ -1063,5 +1086,50 @@ mod tests {
         state.active_prefill_tokens.insert(0, 2_500);
 
         assert!(state.is_busy(None, None, Some(2.0)));
+    }
+
+    #[tokio::test]
+    async fn set_load_threshold_config_refreshes_free_instances_immediately() {
+        let rt = Runtime::from_current().unwrap();
+        let drt = DistributedRuntime::new(rt.clone(), DistributedConfig::process_local())
+            .await
+            .unwrap();
+        let ns = drt
+            .namespace("test_monitor_threshold_refresh".to_string())
+            .unwrap();
+        let component = ns.component("test_component".to_string()).unwrap();
+        let endpoint = component.endpoint("test_endpoint".to_string());
+
+        let client = endpoint.client().await.unwrap();
+        let monitor = KvWorkerMonitor::new(client.clone(), LoadThresholdConfig::default());
+
+        endpoint.register_endpoint_instance().await.unwrap();
+        client.wait_for_instances().await.unwrap();
+
+        let worker_id = client.instance_ids_avail()[0];
+        {
+            let mut state = monitor.worker_load_states.entry(worker_id).or_default();
+            state.active_prefill_tokens.insert(0, 5_000);
+            state.max_num_batched_tokens.insert(0, 10_000);
+        }
+
+        assert_eq!(**client.instance_ids_free(), vec![worker_id]);
+
+        monitor.set_load_threshold_config(&LoadThresholdConfig {
+            active_prefill_tokens_threshold: Some(1_000),
+            ..Default::default()
+        });
+        assert!(
+            client.instance_ids_free().is_empty(),
+            "worker should become busy immediately after threshold update"
+        );
+
+        monitor.set_load_threshold_config(&LoadThresholdConfig {
+            active_prefill_tokens_threshold: Some(10_000),
+            ..Default::default()
+        });
+        assert_eq!(**client.instance_ids_free(), vec![worker_id]);
+
+        rt.shutdown();
     }
 }

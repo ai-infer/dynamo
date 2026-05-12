@@ -131,7 +131,7 @@ pub struct Client {
     pub instance_source: Arc<tokio::sync::watch::Receiver<Vec<Instance>>>,
     // These are the instance source ids less those reported as down from sending rpc
     instance_avail: Arc<ArcSwap<Vec<u64>>>,
-    // These are the instance source ids less those reported as busy (above threshold)
+    // These are the available instance ids less those reported as busy (above threshold)
     instance_free: Arc<ArcSwap<Vec<u64>>>,
     // Watch sender for available instance IDs (for sending updates)
     instance_avail_tx: Arc<tokio::sync::watch::Sender<Vec<u64>>>,
@@ -251,7 +251,13 @@ impl Client {
             .iter()
             .filter_map(|&id| if id == instance_id { None } else { Some(id) })
             .collect::<Vec<_>>();
+        let filtered_free = self
+            .instance_ids_free()
+            .iter()
+            .filter_map(|&id| if id == instance_id { None } else { Some(id) })
+            .collect::<Vec<_>>();
         self.instance_avail.store(Arc::new(filtered.clone()));
+        self.instance_free.store(Arc::new(filtered_free));
 
         // Notify watch channel subscribers about the change
         let _ = self.instance_avail_tx.send(filtered);
@@ -261,20 +267,40 @@ impl Client {
 
     /// Update the set of free instances based on busy instance IDs
     pub fn update_free_instances(&self, busy_instance_ids: &[u64]) {
-        let all_instance_ids = self.instance_ids();
-        let free_ids: Vec<u64> = all_instance_ids
-            .into_iter()
+        let avail_instance_ids = self.instance_ids_avail();
+        let free_ids: Vec<u64> = avail_instance_ids
+            .iter()
+            .copied()
             .filter(|id| !busy_instance_ids.contains(id))
             .collect();
         self.instance_free.store(Arc::new(free_ids));
     }
 
-    /// Monitor the key-value instance source and update instance_avail.
+    /// Reconcile free instances against the latest discovery snapshot.
+    ///
+    /// Existing instances preserve their current free/busy state. Newly added
+    /// instances start as free, and removed instances are dropped.
+    pub(crate) fn reconcile_free_instances(&self, instance_ids: &[u64]) {
+        let current_avail: HashSet<u64> = self.instance_ids_avail().iter().copied().collect();
+        let current_free: HashSet<u64> = self.instance_ids_free().iter().copied().collect();
+        let free_ids: Vec<u64> = instance_ids
+            .iter()
+            .copied()
+            .filter(|id| !current_avail.contains(id) || current_free.contains(id))
+            .collect();
+        self.instance_free.store(Arc::new(free_ids));
+    }
+
+    /// Monitor the key-value instance source and reconcile instance_avail.
     ///
     /// This function also performs periodic reconciliation: if `instance_source` hasn't
     /// changed for `reconcile_interval`, we reset `instance_avail` to match
     /// `instance_source`. This ensures instances removed via `report_instance_down`
     /// are eventually restored even if the discovery source doesn't emit updates.
+    ///
+    /// `instance_free` is reconciled more conservatively: existing instances
+    /// keep their current free/busy status, newly discovered instances start
+    /// free, and removed instances are dropped.
     fn monitor_instance_source(&self) {
         let reconcile_interval = self.reconcile_interval;
         let cancel_token = self.endpoint.drt().primary_token();
@@ -289,9 +315,8 @@ impl Client {
                     .map(|instance| instance.id())
                     .collect();
 
-                // TODO: this resets both tracked available and free instances
+                client.reconcile_free_instances(&instance_ids);
                 client.instance_avail.store(Arc::new(instance_ids.clone()));
-                client.instance_free.store(Arc::new(instance_ids.clone()));
 
                 // Clean up stale occupancy counters for instances that no longer exist.
                 let registry = client.endpoint.drt().routing_occupancy_states();
@@ -482,6 +507,7 @@ mod tests {
 
         // Manually set up instance_avail with test instances
         client.instance_avail.store(Arc::new(vec![1, 2, 3]));
+        client.instance_free.store(Arc::new(vec![1, 2, 3]));
         assert_eq!(**client.instance_ids_avail(), vec![1u64, 2, 3]);
 
         // Report instance 2 as down
@@ -495,6 +521,58 @@ mod tests {
             "Instance 2 should be removed after report_instance_down"
         );
         assert!(avail.contains(&3), "Instance 3 should still be available");
+
+        let free = client.instance_ids_free();
+        assert!(free.contains(&1), "Instance 1 should still be free");
+        assert!(
+            !free.contains(&2),
+            "Instance 2 should be removed from free instances after report_instance_down"
+        );
+        assert!(free.contains(&3), "Instance 3 should still be free");
+
+        rt.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_free_instances_preserves_busy_state_and_adds_new_instances() {
+        let rt = Runtime::from_current().unwrap();
+        let drt = DistributedRuntime::new(rt.clone(), DistributedConfig::process_local())
+            .await
+            .unwrap();
+        let ns = drt.namespace("test_reconcile_free".to_string()).unwrap();
+        let component = ns.component("test_component".to_string()).unwrap();
+        let endpoint = component.endpoint("test_endpoint".to_string());
+
+        let client = endpoint.client().await.unwrap();
+
+        // Existing instance 2 is busy (missing from free), instance 1 is deleted,
+        // and instance 4 is newly discovered.
+        client.instance_avail.store(Arc::new(vec![1, 2, 3]));
+        client.instance_free.store(Arc::new(vec![1, 3]));
+        client.reconcile_free_instances(&[2, 3, 4]);
+
+        assert_eq!(**client.instance_ids_free(), vec![3u64, 4]);
+
+        rt.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_update_free_instances_uses_available_instances() {
+        let rt = Runtime::from_current().unwrap();
+        let drt = DistributedRuntime::new(rt.clone(), DistributedConfig::process_local())
+            .await
+            .unwrap();
+        let ns = drt.namespace("test_update_free".to_string()).unwrap();
+        let component = ns.component("test_component".to_string()).unwrap();
+        let endpoint = component.endpoint("test_endpoint".to_string());
+
+        let client = endpoint.client().await.unwrap();
+        client.instance_avail.store(Arc::new(vec![1, 3]));
+        client.instance_free.store(Arc::new(vec![1, 3]));
+
+        client.update_free_instances(&[1]);
+
+        assert_eq!(**client.instance_ids_free(), vec![3u64]);
 
         rt.shutdown();
     }
