@@ -116,12 +116,13 @@ RUN apt-get update -y \
 {% if device == "cuda" %}
 # Install system dependencies
 # Cache dnf downloads; sharing=locked avoids dnf/rpm races with concurrent builds.
-# `almalinux-release-synergy` runs `crb enable` in %post, which recursively invokes
-# dnf and deadlocks in container builds waiting for pid 1. Install it with
-# noscripts and enable PowerTools/CRB explicitly in the next command.
+# The manylinux AlmaLinux base already ships a disabled PowerTools repo file.
+# Avoid installing `almalinux-release-synergy`: its enablement path can recurse
+# into dnf and hang container builds on aarch64. Flip the repo on directly.
 RUN --mount=type=cache,target=/var/cache/dnf,sharing=locked \
-    dnf install -y --setopt=tsflags=noscripts almalinux-release-synergy && \
-    dnf config-manager --set-enabled powertools && \
+    repo_file="$(find /etc/yum.repos.d -maxdepth 1 -iname '*powertools*.repo' | head -n 1)" && \
+    test -n "${repo_file}" && \
+    sed -ri '/^\[powertools\]/,/^\[/ s/^enabled=0/enabled=1/' "${repo_file}" && \
     dnf install -y \
         # Autotools (required for UCX, libfabric ./autogen.sh and ./configure)
         autoconf \
