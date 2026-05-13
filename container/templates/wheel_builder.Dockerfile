@@ -116,8 +116,11 @@ RUN apt-get update -y \
 {% if device == "cuda" %}
 # Install system dependencies
 # Cache dnf downloads; sharing=locked avoids dnf/rpm races with concurrent builds.
+# `almalinux-release-synergy` runs `crb enable` in %post, which recursively invokes
+# dnf and deadlocks in container builds waiting for pid 1. Install it with
+# noscripts and enable PowerTools/CRB explicitly in the next command.
 RUN --mount=type=cache,target=/var/cache/dnf,sharing=locked \
-    dnf install -y almalinux-release-synergy && \
+    dnf install -y --setopt=tsflags=noscripts almalinux-release-synergy && \
     dnf config-manager --set-enabled powertools && \
     dnf install -y \
         # Autotools (required for UCX, libfabric ./autogen.sh and ./configure)
